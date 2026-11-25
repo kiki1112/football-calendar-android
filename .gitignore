@@ -1,0 +1,26 @@
+# Gradle
+.gradle/
+build/
+*/build/
+!gradle/wrapper/gradle-wrapper.properties
+
+# Local Android Studio / IDE
+local.properties
+.idea/
+*.iml
+.DS_Store
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Signing / Secrets
+*.jks
+*.keystore
+secrets.properties
+
+# Python / Generated Pages output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+_site/
+feed_dist/

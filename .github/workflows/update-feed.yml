@@ -1,0 +1,64 @@
+name: Update Football Schedule & Deploy GitHub Pages
+
+on:
+  push:
+    branches: ["main", "master"]
+    paths:
+      - "feed/**"
+      - ".github/workflows/update-feed.yml"
+  schedule:
+    # Auto-refresh match schedules every 6 hours
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build-feed:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run Feed Generator Unit Tests
+        run: python -m unittest discover -s feed/tests -v
+
+      - name: Generate Schedule JSON, ICS, and Web Dashboard
+        env:
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+        run: |
+          python feed/generate_feed.py \
+            --output-dir _site \
+            --competitions PL,PD,BL1,SA,FL1,CL \
+            --days-back 3 \
+            --days-ahead 21
+
+      - name: Upload GitHub Pages Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site/
+
+  deploy-pages:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build-feed
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
