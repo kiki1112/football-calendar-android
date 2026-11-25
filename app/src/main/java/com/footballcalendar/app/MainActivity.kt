@@ -2,16 +2,21 @@ package com.footballcalendar.app
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.Leaderboard
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -21,6 +26,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -31,19 +38,31 @@ import androidx.navigation.compose.rememberNavController
 import com.footballcalendar.app.ui.CalendarViewModel
 import com.footballcalendar.app.ui.screens.CalendarScreen
 import com.footballcalendar.app.ui.screens.SettingsScreen
+import com.footballcalendar.app.ui.screens.StandingsScreen
 import com.footballcalendar.app.ui.screens.TeamsScreen
+import com.footballcalendar.app.ui.theme.AppleCanvas
+import com.footballcalendar.app.ui.theme.AppleDivider
+import com.footballcalendar.app.ui.theme.AppleRed
+import com.footballcalendar.app.ui.theme.AppleRedTint
 import com.footballcalendar.app.ui.theme.FootballCalendarTheme
+import com.footballcalendar.app.ui.theme.InkTertiary
 
 private enum class AppTab(val route: String, val label: String, val icon: ImageVector) {
-    CALENDAR("calendar", "赛事日历", Icons.Filled.CalendarMonth),
-    TEAMS("teams", "关注球队", Icons.Filled.Star),
-    SETTINGS("settings", "同步设置", Icons.Filled.Settings),
+    CALENDAR("calendar", "日历", Icons.Filled.CalendarMonth),
+    STANDINGS("standings", "积分榜", Icons.Filled.Leaderboard),
+    TEAMS("teams", "球星主队", Icons.Filled.Star),
+    SETTINGS("settings", "设置", Icons.Filled.Settings),
 }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.light(
+                AppleCanvas.toArgb(),
+                AppleCanvas.toArgb(),
+            ),
+        )
         setContent {
             FootballCalendarTheme {
                 FootballCalendarRoot()
@@ -71,24 +90,35 @@ private fun FootballCalendarRoot(
     }
 
     Scaffold(
+        containerColor = AppleCanvas,
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         bottomBar = {
-            NavigationBar {
-                AppTab.entries.forEach { tab ->
-                    NavigationBarItem(
-                        selected = currentRoute == tab.route,
-                        onClick = {
-                            if (currentRoute != tab.route) {
-                                navController.navigate(tab.route) {
-                                    popUpTo(AppTab.CALENDAR.route) { saveState = true }
-                                    launchSingleTop = true
-                                    restoreState = true
+            Column {
+                HorizontalDivider(color = AppleDivider)
+                NavigationBar(containerColor = Color.White) {
+                    AppTab.entries.forEach { tab ->
+                        NavigationBarItem(
+                            selected = currentRoute == tab.route,
+                            onClick = {
+                                if (currentRoute != tab.route) {
+                                    navController.navigate(tab.route) {
+                                        popUpTo(AppTab.CALENDAR.route) { saveState = true }
+                                        launchSingleTop = true
+                                        restoreState = true
+                                    }
                                 }
-                            }
-                        },
-                        icon = { Icon(tab.icon, contentDescription = tab.label) },
-                        label = { Text(tab.label) },
-                    )
+                            },
+                            icon = { Icon(tab.icon, contentDescription = tab.label) },
+                            label = { Text(tab.label) },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = AppleRed,
+                                selectedTextColor = AppleRed,
+                                indicatorColor = AppleRedTint,
+                                unselectedIconColor = InkTertiary,
+                                unselectedTextColor = InkTertiary,
+                            ),
+                        )
+                    }
                 }
             }
         },
@@ -106,15 +136,22 @@ private fun FootballCalendarRoot(
                     onNextMonth = viewModel::nextMonth,
                     onJumpToday = viewModel::jumpToToday,
                     onToggleExpanded = viewModel::toggleMonthExpanded,
-                    onToggleOnlyFavorites = viewModel::toggleOnlyFavorites,
+                    onSelectFilterTab = viewModel::setCalendarFilterTab,
                     onSelectLeagueFilter = viewModel::selectLeagueFilter,
                     onRefresh = { viewModel.syncNow(simulateDemoChange = false) },
                     onDismissChanges = viewModel::dismissChangesBanner,
                     onOpenMatchDetail = viewModel::openMatchDetail,
                     onCloseMatchDetail = viewModel::closeMatchDetail,
                     onToggleFavoriteTeam = viewModel::toggleFavoriteTeam,
+                    onToggleWatchlist = viewModel::toggleWatchlistMatch,
                     onBuildCalendarIntent = viewModel::buildAddToCalendarIntent,
                     onBuildShareIcsIntent = viewModel::buildShareIcsIntent,
+                )
+            }
+            composable(AppTab.STANDINGS.route) {
+                StandingsScreen(
+                    state = state,
+                    onSelectLeague = viewModel::selectStandingsLeague,
                 )
             }
             composable(AppTab.TEAMS.route) {
@@ -122,6 +159,18 @@ private fun FootballCalendarRoot(
                     state = state,
                     onToggleCompetition = viewModel::toggleCompetition,
                     onToggleFavoriteTeam = viewModel::toggleFavoriteTeam,
+                    onToggleFavoritePlayer = viewModel::toggleFavoritePlayer,
+                    onOpenPlayerDetail = viewModel::openPlayerDetail,
+                    onClosePlayerDetail = viewModel::closePlayerDetail,
+                    onSearchExternalPlayer = viewModel::searchExternalPlayer,
+                    onOpenMatchDetail = { match ->
+                        viewModel.openMatchDetail(match)
+                        navController.navigate(AppTab.CALENDAR.route) {
+                            popUpTo(AppTab.CALENDAR.route) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
                 )
             }
             composable(AppTab.SETTINGS.route) {
@@ -132,6 +181,14 @@ private fun FootballCalendarRoot(
                     onUpdateSyncSettings = viewModel::updateSyncSettings,
                     onUpdateDisplayAndNotifications = viewModel::updateDisplayAndNotificationSettings,
                     onSyncSystemCalendarNow = viewModel::syncMatchesToSystemCalendarNow,
+                    onOpenMatchDetail = { match ->
+                        viewModel.openMatchDetail(match)
+                        navController.navigate(AppTab.CALENDAR.route) {
+                            popUpTo(AppTab.CALENDAR.route) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
                     onBuildShareIcsIntent = viewModel::buildShareIcsIntent,
                     onShowMessage = viewModel::showBanner,
                 )

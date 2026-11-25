@@ -123,7 +123,7 @@ class SystemCalendarSyncManager(private val context: Context) {
             put(CalendarContract.Calendars.ACCOUNT_TYPE, CalendarContract.ACCOUNT_TYPE_LOCAL)
             put(CalendarContract.Calendars.NAME, CALENDAR_INTERNAL_NAME)
             put(CalendarContract.Calendars.CALENDAR_DISPLAY_NAME, CALENDAR_DISPLAY_NAME)
-            put(CalendarContract.Calendars.CALENDAR_COLOR, 0xFF16A34A.toInt())
+            put(CalendarContract.Calendars.CALENDAR_COLOR, 0xFFE11D48.toInt())
             put(CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL, CalendarContract.Calendars.CAL_ACCESS_OWNER)
             put(CalendarContract.Calendars.OWNER_ACCOUNT, ACCOUNT_NAME)
             put(CalendarContract.Calendars.VISIBLE, 1)

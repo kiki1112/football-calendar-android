@@ -24,7 +24,9 @@ data class UserPreferences(
     val githubPagesUrl: String = UserPreferencesRepository.DEFAULT_GITHUB_PAGES_URL,
     val footballDataApiKey: String = "",
     val followedCompetitions: Set<String> = CompetitionCatalog.defaultCodes,
-    val favoriteTeams: Set<String> = setOf("阿森纳", "利物浦", "皇家马德里"),
+    val favoriteTeams: Set<String> = setOf("阿森纳", "利物浦", "皇家马德里", "阿根廷国家队"),
+    val favoritePlayers: Set<String> = setOf("p-mbappe", "p-messi", "p-yamal"),
+    val watchlistMatchIds: Set<String> = emptySet(),
     val autoSyncEnabled: Boolean = true,
     val syncIntervalHours: Int = 6,
     val wifiOnlySync: Boolean = false,
@@ -45,6 +47,8 @@ class UserPreferencesRepository(private val context: Context) {
         val FOOTBALL_DATA_API_KEY = stringPreferencesKey("football_data_api_key")
         val FOLLOWED_COMPETITIONS = stringSetPreferencesKey("followed_competitions")
         val FAVORITE_TEAMS = stringSetPreferencesKey("favorite_teams")
+        val FAVORITE_PLAYERS = stringSetPreferencesKey("favorite_players")
+        val WATCHLIST_MATCH_IDS = stringSetPreferencesKey("watchlist_match_ids")
         val AUTO_SYNC_ENABLED = booleanPreferencesKey("auto_sync_enabled")
         val SYNC_INTERVAL_HOURS = intPreferencesKey("sync_interval_hours")
         val WIFI_ONLY_SYNC = booleanPreferencesKey("wifi_only_sync")
@@ -64,7 +68,9 @@ class UserPreferencesRepository(private val context: Context) {
             githubPagesUrl = prefs[Keys.GITHUB_PAGES_URL] ?: DEFAULT_GITHUB_PAGES_URL,
             footballDataApiKey = prefs[Keys.FOOTBALL_DATA_API_KEY] ?: "",
             followedCompetitions = prefs[Keys.FOLLOWED_COMPETITIONS] ?: CompetitionCatalog.defaultCodes,
-            favoriteTeams = prefs[Keys.FAVORITE_TEAMS] ?: setOf("阿森纳", "利物浦", "皇家马德里"),
+            favoriteTeams = prefs[Keys.FAVORITE_TEAMS] ?: setOf("阿森纳", "利物浦", "皇家马德里", "阿根廷国家队"),
+            favoritePlayers = prefs[Keys.FAVORITE_PLAYERS] ?: setOf("p-mbappe", "p-messi", "p-yamal"),
+            watchlistMatchIds = prefs[Keys.WATCHLIST_MATCH_IDS] ?: emptySet(),
             autoSyncEnabled = prefs[Keys.AUTO_SYNC_ENABLED] ?: true,
             syncIntervalHours = prefs[Keys.SYNC_INTERVAL_HOURS] ?: 6,
             wifiOnlySync = prefs[Keys.WIFI_ONLY_SYNC] ?: false,
@@ -107,9 +113,26 @@ class UserPreferencesRepository(private val context: Context) {
         if (cleaned.isEmpty()) return
         context.userPrefsDataStore.edit { prefs ->
             val current = prefs[Keys.FAVORITE_TEAMS]?.toMutableSet()
-                ?: mutableSetOf("阿森纳", "利物浦", "皇家马德里")
+                ?: mutableSetOf("阿森纳", "利物浦", "皇家马德里", "阿根廷国家队")
             if (cleaned in current) current.remove(cleaned) else current.add(cleaned)
             prefs[Keys.FAVORITE_TEAMS] = current
+        }
+    }
+
+    suspend fun toggleFavoritePlayer(playerId: String) {
+        context.userPrefsDataStore.edit { prefs ->
+            val current = prefs[Keys.FAVORITE_PLAYERS]?.toMutableSet()
+                ?: mutableSetOf("p-mbappe", "p-messi", "p-yamal")
+            if (playerId in current) current.remove(playerId) else current.add(playerId)
+            prefs[Keys.FAVORITE_PLAYERS] = current
+        }
+    }
+
+    suspend fun toggleWatchlistMatch(matchId: String) {
+        context.userPrefsDataStore.edit { prefs ->
+            val current = prefs[Keys.WATCHLIST_MATCH_IDS]?.toMutableSet() ?: mutableSetOf()
+            if (matchId in current) current.remove(matchId) else current.add(matchId)
+            prefs[Keys.WATCHLIST_MATCH_IDS] = current.takeLastCompat(150)
         }
     }
 

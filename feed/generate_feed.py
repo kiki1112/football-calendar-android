@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
-"""Football match schedule feed generator for GitHub Pages and Android App sync.
+"""Football match schedule, standings, and star players feed generator (v2).
 
-Fetches upcoming/recent fixtures from football-data.org v4 when FOOTBALL_DATA_API_KEY
-is available (or falls back to realistic dynamic demo fixtures anchored to the
-current UTC date) and writes:
-  - fixtures.json : Normalized feed consumed by the Android app
+Outputs into --output-dir:
+  - fixtures.json : Normalized feed (matches with team crests, standings, star players)
   - football.ics  : Combined RFC 5545 iCalendar subscription file
   - ics/<CODE>.ics: Per-competition iCalendar subscription files
-  - index.html    : Static web dashboard for GitHub Pages
+  - index.html    : Apple Red & White web dashboard with schedule, standings & stars
 """
 
 from __future__ import annotations
@@ -26,15 +24,19 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-DEFAULT_COMPETITIONS = ["PL", "PD", "BL1", "SA", "FL1", "CL"]
+DEFAULT_COMPETITIONS = ["PL", "PD", "BL1", "SA", "FL1", "CL", "WC", "EC", "INT"]
+STANDINGS_COMPETITIONS = ["PL", "PD", "BL1", "SA", "FL1", "CL"]
 
 COMPETITION_META: dict[str, dict[str, str]] = {
-    "PL": {"name": "Premier League", "zhName": "英超", "country": "英格兰", "color": "#38003C"},
-    "PD": {"name": "Primera Division", "zhName": "西甲", "country": "西班牙", "color": "#EE8707"},
-    "BL1": {"name": "Bundesliga", "zhName": "德甲", "country": "德国", "color": "#D20515"},
-    "SA": {"name": "Serie A", "zhName": "意甲", "country": "意大利", "color": "#024494"},
-    "FL1": {"name": "Ligue 1", "zhName": "法甲", "country": "法国", "color": "#091C3E"},
-    "CL": {"name": "UEFA Champions League", "zhName": "欧冠", "country": "欧洲", "color": "#0E1E5B"},
+    "PL": {"name": "Premier League", "zhName": "英超", "country": "英格兰", "color": "#E11D48"},
+    "PD": {"name": "Primera Division", "zhName": "西甲", "country": "西班牙", "color": "#EA580C"},
+    "BL1": {"name": "Bundesliga", "zhName": "德甲", "country": "德国", "color": "#DC2626"},
+    "SA": {"name": "Serie A", "zhName": "意甲", "country": "意大利", "color": "#2563EB"},
+    "FL1": {"name": "Ligue 1", "zhName": "法甲", "country": "法国", "color": "#0284C7"},
+    "CL": {"name": "UEFA Champions League", "zhName": "欧冠", "country": "欧洲", "color": "#1D4ED8"},
+    "WC": {"name": "FIFA World Cup", "zhName": "世界杯", "country": "国家队", "color": "#D97706"},
+    "EC": {"name": "UEFA European Championship", "zhName": "欧洲杯", "country": "国家队", "color": "#BE123C"},
+    "INT": {"name": "International Match", "zhName": "国家队", "country": "国际赛事", "color": "#E11D48"},
 }
 
 TEAM_ZH_MAP: dict[str, str] = {
@@ -82,7 +84,178 @@ TEAM_ZH_MAP: dict[str, str] = {
     "Olympique de Marseille": "马赛",
     "AS Monaco FC": "摩纳哥",
     "Olympique Lyonnais": "里昂",
+    "Inter Miami CF": "迈阿密国际",
+    "Al-Nassr FC": "利雅得胜利",
+    # National teams
+    "France": "法国国家队",
+    "Argentina": "阿根廷国家队",
+    "Spain": "西班牙国家队",
+    "England": "英格兰国家队",
+    "Germany": "德国国家队",
+    "Brazil": "巴西国家队",
+    "Portugal": "葡萄牙国家队",
+    "Netherlands": "荷兰国家队",
+    "Italy": "意大利国家队",
+    "China PR": "中国国家队",
+    "Japan": "日本国家队",
+    "South Korea": "韩国国家队",
 }
+
+TEAM_LOGO_MAP: dict[str, str] = {
+    "Arsenal FC": "https://thumb.wikimedia.org/wikipedia/en/thumb/5/53/Arsenal_FC.svg/330px-Arsenal_FC.svg.png",
+    "Manchester City FC": "https://thumb.wikimedia.org/wikipedia/en/thumb/e/eb/Manchester_City_FC_badge.svg/330px-Manchester_City_FC_badge.svg.png",
+    "Liverpool FC": "https://thumb.wikimedia.org/wikipedia/en/thumb/0/0c/Liverpool_FC.svg/330px-Liverpool_FC.svg.png",
+    "Chelsea FC": "https://thumb.wikimedia.org/wikipedia/en/thumb/c/cc/Chelsea_FC.svg/330px-Chelsea_FC.svg.png",
+    "Manchester United FC": "https://thumb.wikimedia.org/wikipedia/en/thumb/7/7a/Manchester_United_FC_crest.svg/330px-Manchester_United_FC_crest.svg.png",
+    "Tottenham Hotspur FC": "https://thumb.wikimedia.org/wikipedia/en/thumb/b/b4/Tottenham_Hotspur.svg/330px-Tottenham_Hotspur.svg.png",
+    "Newcastle United FC": "https://thumb.wikimedia.org/wikipedia/en/thumb/8/87/Newcastle_United_FC_2026_crest.svg/330px-Newcastle_United_FC_2026_crest.svg.png",
+    "Aston Villa FC": "https://thumb.wikimedia.org/wikipedia/en/thumb/9/9a/Aston_Villa_FC_new_crest.svg/330px-Aston_Villa_FC_new_crest.svg.png",
+    "Real Madrid CF": "https://thumb.wikimedia.org/wikipedia/en/thumb/5/56/Real_Madrid_CF.svg/330px-Real_Madrid_CF.svg.png",
+    "FC Barcelona": "https://thumb.wikimedia.org/wikipedia/en/thumb/4/47/FC_Barcelona_%28crest%29.svg/330px-FC_Barcelona_%28crest%29.svg.png",
+    "Club Atlético de Madrid": "https://thumb.wikimedia.org/wikipedia/en/thumb/f/f9/Atletico_Madrid_Logo_2024.svg/330px-Atletico_Madrid_Logo_2024.svg.png",
+    "Athletic Club": "https://thumb.wikimedia.org/wikipedia/en/thumb/9/98/Club_Athletic_Bilbao_logo.svg/330px-Club_Athletic_Bilbao_logo.svg.png",
+    "FC Bayern München": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/8d/FC_Bayern_M%C3%BCnchen_logo_%282024%29.svg/330px-FC_Bayern_M%C3%BCnchen_logo_%282024%29.svg.png",
+    "Borussia Dortmund": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/67/Borussia_Dortmund_logo.svg/330px-Borussia_Dortmund_logo.svg.png",
+    "Bayer 04 Leverkusen": "https://thumb.wikimedia.org/wikipedia/en/thumb/5/59/Bayer_04_Leverkusen_logo.svg/330px-Bayer_04_Leverkusen_logo.svg.png",
+    "RB Leipzig": "https://thumb.wikimedia.org/wikipedia/en/thumb/0/04/RB_Leipzig_2014_logo.svg/330px-RB_Leipzig_2014_logo.svg.png",
+    "FC Internazionale Milano": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/05/FC_Internazionale_Milano_2021.svg/330px-FC_Internazionale_Milano_2021.svg.png",
+    "AC Milan": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d0/Logo_of_AC_Milan.svg/330px-Logo_of_AC_Milan.svg.png",
+    "Juventus FC": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/ed/Juventus_FC_-_logo_black_%28Italy%2C_2020%29.svg/330px-Juventus_FC_-_logo_black_%28Italy%2C_2020%29.svg.png",
+    "SSC Napoli": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4d/SSC_Napoli_2025_%28white_and_azure%29.svg/330px-SSC_Napoli_2025_%28white_and_azure%29.svg.png",
+    "AS Roma": "https://thumb.wikimedia.org/wikipedia/en/thumb/f/f7/AS_Roma_logo_%282017%29.svg/330px-AS_Roma_logo_%282017%29.svg.png",
+    "Atalanta BC": "https://thumb.wikimedia.org/wikipedia/en/thumb/f/f2/Atalanta_BC_new_logo.svg/330px-Atalanta_BC_new_logo.svg.png",
+    "Paris Saint-Germain FC": "https://thumb.wikimedia.org/wikipedia/en/thumb/a/a7/Paris_Saint-Germain_F.C..svg/330px-Paris_Saint-Germain_F.C..svg.png",
+    "Olympique de Marseille": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4f/Olympique_de_Marseille_2026_logo.svg/330px-Olympique_de_Marseille_2026_logo.svg.png",
+    "AS Monaco FC": "https://thumb.wikimedia.org/wikipedia/en/thumb/c/cf/LogoASMonacoFC2021.svg/330px-LogoASMonacoFC2021.svg.png",
+    "Olympique Lyonnais": "https://thumb.wikimedia.org/wikipedia/en/thumb/1/1c/Olympique_Lyonnais_logo.svg/330px-Olympique_Lyonnais_logo.svg.png",
+    "France": "https://thumb.wikimedia.org/wikipedia/en/thumb/1/12/France_national_football_team_seal.svg/330px-France_national_football_team_seal.svg.png",
+    "Argentina": "https://thumb.wikimedia.org/wikipedia/en/thumb/c/c1/Argentina_national_football_team_logo.svg/330px-Argentina_national_football_team_logo.svg.png",
+    "Spain": "https://thumb.wikimedia.org/wikipedia/en/thumb/3/39/Spain_national_football_team_crest.svg/330px-Spain_national_football_team_crest.svg.png",
+    "England": "https://thumb.wikimedia.org/wikipedia/en/thumb/8/8b/England_national_football_team_crest.svg/330px-England_national_football_team_crest.svg.png",
+    "Germany": "https://thumb.wikimedia.org/wikipedia/en/thumb/e/e3/DFBEagle.svg/330px-DFBEagle.svg.png",
+    "Brazil": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/32/Confedera%C3%A7%C3%A3o_Brasileira_de_Futebol_logo_%282020%29.svg/330px-Confedera%C3%A7%C3%A3o_Brasileira_de_Futebol_logo_%282020%29.svg.png",
+    "Portugal": "https://thumb.wikimedia.org/wikipedia/en/thumb/e/e4/Portugal_national_football_team_logo.svg/330px-Portugal_national_football_team_logo.svg.png",
+    "Netherlands": "https://thumb.wikimedia.org/wikipedia/en/thumb/7/78/Netherlands_national_football_team_logo.svg/330px-Netherlands_national_football_team_logo.svg.png",
+    "Italy": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bf/Logo_Italy_National_Football_Team_-_2023.svg/330px-Logo_Italy_National_Football_Team_-_2023.svg.png",
+    "China PR": "https://thumb.wikimedia.org/wikipedia/en/thumb/0/03/China_national_football_team.svg/330px-China_national_football_team.svg.png",
+    "Japan": "https://thumb.wikimedia.org/wikipedia/en/thumb/8/84/Japan_national_football_team_crest.svg/330px-Japan_national_football_team_crest.svg.png",
+    "South Korea": "https://thumb.wikimedia.org/wikipedia/en/thumb/4/41/South_Korea_national_football_team.svg/330px-South_Korea_national_football_team.svg.png",
+}
+
+STAR_PLAYERS_CATALOG: list[dict[str, Any]] = [
+    {
+        "id": "p-mbappe", "name": "Kylian Mbappé", "zhName": "姆巴佩",
+        "clubName": "Real Madrid CF", "clubZhName": "皇家马德里",
+        "nationalName": "France", "nationalZhName": "法国国家队",
+        "positionZh": "前锋", "nationalityZh": "法国", "shirtNumber": 9, "birthYear": 1998,
+        "portraitUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/95/Kylian_Mbappe_France_v_Senegal_16_June_2026-391_%28cropped%29.jpg/330px-Kylian_Mbappe_France_v_Senegal_16_June_2026-391_%28cropped%29.jpg",
+    },
+    {
+        "id": "p-haaland", "name": "Erling Haaland", "zhName": "哈兰德",
+        "clubName": "Manchester City FC", "clubZhName": "曼城",
+        "nationalName": "Norway", "nationalZhName": "挪威国家队",
+        "positionZh": "中锋", "nationalityZh": "挪威", "shirtNumber": 9, "birthYear": 2000,
+        "portraitUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/43/Erling_Haaland_Morocco_v_Norway_7_June_2026-51.jpg/330px-Erling_Haaland_Morocco_v_Norway_7_June_2026-51.jpg",
+    },
+    {
+        "id": "p-yamal", "name": "Lamine Yamal", "zhName": "亚马尔",
+        "clubName": "FC Barcelona", "clubZhName": "巴塞罗那",
+        "nationalName": "Spain", "nationalZhName": "西班牙国家队",
+        "positionZh": "右边锋", "nationalityZh": "西班牙", "shirtNumber": 19, "birthYear": 2007,
+        "portraitUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/13/Lamine_Yamal_France_v_Spain_7.24.26-142.jpg/330px-Lamine_Yamal_France_v_Spain_7.24.26-142.jpg",
+    },
+    {
+        "id": "p-bellingham", "name": "Jude Bellingham", "zhName": "贝林厄姆",
+        "clubName": "Real Madrid CF", "clubZhName": "皇家马德里",
+        "nationalName": "England", "nationalZhName": "英格兰国家队",
+        "positionZh": "前腰", "nationalityZh": "英格兰", "shirtNumber": 5, "birthYear": 2003,
+        "portraitUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/23/Jude_Bellingham_England_v_Ghana_23_June_2026-061_%28cropped%29.jpg/330px-Jude_Bellingham_England_v_Ghana_23_June_2026-061_%28cropped%29.jpg",
+    },
+    {
+        "id": "p-vinicius", "name": "Vinícius Júnior", "zhName": "维尼修斯",
+        "clubName": "Real Madrid CF", "clubZhName": "皇家马德里",
+        "nationalName": "Brazil", "nationalZhName": "巴西国家队",
+        "positionZh": "左边锋", "nationalityZh": "巴西", "shirtNumber": 7, "birthYear": 2000,
+        "portraitUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/10/Vin%C3%ADcius_J%C3%BAnior_Brazil_V_Morocco_13_June_2026-207_%28cropped%29.jpg/330px-Vin%C3%ADcius_J%C3%BAnior_Brazil_V_Morocco_13_June_2026-207_%28cropped%29.jpg",
+    },
+    {
+        "id": "p-salah", "name": "Mohamed Salah", "zhName": "萨拉赫",
+        "clubName": "Liverpool FC", "clubZhName": "利物浦",
+        "nationalName": "Egypt", "nationalZhName": "埃及国家队",
+        "positionZh": "右边锋", "nationalityZh": "埃及", "shirtNumber": 11, "birthYear": 1992,
+        "portraitUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a6/Mohamed_Salah_Argentina_v_Egypt_7_July_2026-163_%28cropped%29.jpg/330px-Mohamed_Salah_Argentina_v_Egypt_7_July_2026-163_%28cropped%29.jpg",
+    },
+    {
+        "id": "p-saka", "name": "Bukayo Saka", "zhName": "萨卡",
+        "clubName": "Arsenal FC", "clubZhName": "阿森纳",
+        "nationalName": "England", "nationalZhName": "英格兰国家队",
+        "positionZh": "右边锋", "nationalityZh": "英格兰", "shirtNumber": 7, "birthYear": 2001,
+        "portraitUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2f/Bukayo_Saka_England_v_Ghana_23_June_2026-057_%28cropped%29.jpg/330px-Bukayo_Saka_England_v_Ghana_23_June_2026-057_%28cropped%29.jpg",
+    },
+    {
+        "id": "p-kane", "name": "Harry Kane", "zhName": "哈里·凯恩",
+        "clubName": "FC Bayern München", "clubZhName": "拜仁慕尼黑",
+        "nationalName": "England", "nationalZhName": "英格兰国家队",
+        "positionZh": "中锋", "nationalityZh": "英格兰", "shirtNumber": 9, "birthYear": 1993,
+        "portraitUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2f/Harry_Kane_England_v_Ghana_23_June_2026-024_%28cropped%29.jpg/330px-Harry_Kane_England_v_Ghana_23_June_2026-024_%28cropped%29.jpg",
+    },
+    {
+        "id": "p-messi", "name": "Lionel Messi", "zhName": "梅西",
+        "clubName": "Inter Miami CF", "clubZhName": "迈阿密国际",
+        "nationalName": "Argentina", "nationalZhName": "阿根廷国家队",
+        "positionZh": "前锋 / 队长", "nationalityZh": "阿根廷", "shirtNumber": 10, "birthYear": 1987,
+        "portraitUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c8/Leo_Messi_Argentina_v_Egypt_7_July_2026-1.jpg/330px-Leo_Messi_Argentina_v_Egypt_7_July_2026-1.jpg",
+    },
+    {
+        "id": "p-ronaldo", "name": "Cristiano Ronaldo", "zhName": "C罗",
+        "clubName": "Al-Nassr FC", "clubZhName": "利雅得胜利",
+        "nationalName": "Portugal", "nationalZhName": "葡萄牙国家队",
+        "positionZh": "前锋 / 队长", "nationalityZh": "葡萄牙", "shirtNumber": 7, "birthYear": 1985,
+        "portraitUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/26/Cristiano_Ronaldo_Croatia_v_Portugal_2_July_2026-075_%28cropped%29.jpg/330px-Cristiano_Ronaldo_Croatia_v_Portugal_2_July_2026-075_%28cropped%29.jpg",
+    },
+    {
+        "id": "p-lautaro", "name": "Lautaro Martínez", "zhName": "劳塔罗",
+        "clubName": "FC Internazionale Milano", "clubZhName": "国际米兰",
+        "nationalName": "Argentina", "nationalZhName": "阿根廷国家队",
+        "positionZh": "中锋", "nationalityZh": "阿根廷", "shirtNumber": 10, "birthYear": 1997,
+        "portraitUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e9/Lautaro_Martinez_Argentina_v_Spain_19_July_2026-049_%28cropped%29.jpg/330px-Lautaro_Martinez_Argentina_v_Spain_19_July_2026-049_%28cropped%29.jpg",
+    },
+    {
+        "id": "p-musiala", "name": "Jamal Musiala", "zhName": "穆西亚拉",
+        "clubName": "FC Bayern München", "clubZhName": "拜仁慕尼黑",
+        "nationalName": "Germany", "nationalZhName": "德国国家队",
+        "positionZh": "前腰", "nationalityZh": "德国", "shirtNumber": 42, "birthYear": 2003,
+        "portraitUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/44/Jamal_Musiala_Ecuador_v_Germany_25_June_2026-174_%28cropped%29.jpg/330px-Jamal_Musiala_Ecuador_v_Germany_25_June_2026-174_%28cropped%29.jpg",
+    },
+    {
+        "id": "p-rodri", "name": "Rodri", "zhName": "罗德里",
+        "clubName": "Manchester City FC", "clubZhName": "曼城",
+        "nationalName": "Spain", "nationalZhName": "西班牙国家队",
+        "positionZh": "后腰", "nationalityZh": "西班牙", "shirtNumber": 16, "birthYear": 1996,
+        "portraitUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7a/Rodri_Argentina_v_Spain_19_July_2026-187_%28cropped%29.jpg/330px-Rodri_Argentina_v_Spain_19_July_2026-187_%28cropped%29.jpg",
+    },
+    {
+        "id": "p-vandijk", "name": "Virgil van Dijk", "zhName": "范戴克",
+        "clubName": "Liverpool FC", "clubZhName": "利物浦",
+        "nationalName": "Netherlands", "nationalZhName": "荷兰国家队",
+        "positionZh": "中后卫", "nationalityZh": "荷兰", "shirtNumber": 4, "birthYear": 1991,
+        "portraitUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5d/20160604_AUT_NED_8876_%28cropped%29.jpg/330px-20160604_AUT_NED_8876_%28cropped%29.jpg",
+    },
+    {
+        "id": "p-wirtz", "name": "Florian Wirtz", "zhName": "维尔茨",
+        "clubName": "Bayer 04 Leverkusen", "clubZhName": "勒沃库森",
+        "nationalName": "Germany", "nationalZhName": "德国国家队",
+        "positionZh": "前腰", "nationalityZh": "德国", "shirtNumber": 10, "birthYear": 2003,
+        "portraitUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/70/Florian_Wirtz_Ecuador_v_Germany_25_June_2026-181_%28cropped%29.jpg/330px-Florian_Wirtz_Ecuador_v_Germany_25_June_2026-181_%28cropped%29.jpg",
+    },
+    {
+        "id": "p-palmer", "name": "Cole Palmer", "zhName": "帕尔默",
+        "clubName": "Chelsea FC", "clubZhName": "切尔西",
+        "nationalName": "England", "nationalZhName": "英格兰国家队",
+        "positionZh": "前腰 / 边锋", "nationalityZh": "英格兰", "shirtNumber": 20, "birthYear": 2002,
+        "portraitUrl": "https://upload.wikimedia.org/wikipedia/commons/f/fb/Cole_Palmer_2025_FIFA_Club_World_Cup_Final.jpg",
+    },
+]
 
 STATUS_ZH_MAP: dict[str, str] = {
     "TIMED": "未开赛",
@@ -111,10 +284,12 @@ class NormalizedMatch:
     homeTeamName: str
     homeTeamShortName: str
     homeTeamZhName: str
+    homeTeamCrest: str
     awayTeamId: int
     awayTeamName: str
     awayTeamShortName: str
     awayTeamZhName: str
+    awayTeamCrest: str
     homeScore: int | None
     awayScore: int | None
     venue: str
@@ -125,7 +300,6 @@ class NormalizedMatch:
 
 
 def localize_team(name: str, short_name: str | None = None) -> str:
-    """Return Chinese team name if mapped, otherwise fall back to short/full name."""
     if name in TEAM_ZH_MAP:
         return TEAM_ZH_MAP[name]
     if short_name and short_name in TEAM_ZH_MAP:
@@ -133,8 +307,13 @@ def localize_team(name: str, short_name: str | None = None) -> str:
     return short_name or name
 
 
+def resolve_team_logo(team_name: str, api_crest: str | None = None) -> str:
+    if api_crest and api_crest.strip():
+        return api_crest.strip()
+    return TEAM_LOGO_MAP.get(team_name, "")
+
+
 def parse_utc_iso(iso_str: str) -> dt.datetime:
-    """Parse an ISO-8601 UTC timestamp string into an aware UTC datetime."""
     cleaned = iso_str.strip()
     if cleaned.endswith("Z"):
         cleaned = cleaned[:-1] + "+00:00"
@@ -149,7 +328,6 @@ def format_utc_iso(ts: dt.datetime) -> str:
 
 
 def normalize_api_match(raw: dict[str, Any], fallback_code: str) -> NormalizedMatch:
-    """Convert one football-data.org v4 match JSON object into NormalizedMatch."""
     comp = raw.get("competition") or {}
     comp_code = (comp.get("code") or fallback_code or "OTHER").upper()
     meta = COMPETITION_META.get(comp_code, {})
@@ -180,10 +358,12 @@ def normalize_api_match(raw: dict[str, Any], fallback_code: str) -> NormalizedMa
         homeTeamName=home_name,
         homeTeamShortName=home_short,
         homeTeamZhName=localize_team(home_name, home_short),
+        homeTeamCrest=resolve_team_logo(home_name, home.get("crest")),
         awayTeamId=int(away.get("id") or 0),
         awayTeamName=away_name,
         awayTeamShortName=away_short,
         awayTeamZhName=localize_team(away_name, away_short),
+        awayTeamCrest=resolve_team_logo(away_name, away.get("crest")),
         homeScore=score_full.get("home"),
         awayScore=score_full.get("away"),
         venue=raw.get("venue") or "",
@@ -191,31 +371,63 @@ def normalize_api_match(raw: dict[str, Any], fallback_code: str) -> NormalizedMa
     )
 
 
+def fetch_json(url: str, api_key: str, timeout_seconds: int = 20) -> dict[str, Any]:
+    req = urllib.request.Request(
+        url,
+        headers={
+            "X-Auth-Token": api_key,
+            "User-Agent": "FootballCalendarSync/2.0",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
 def fetch_competition_matches(
     api_key: str,
     competition_code: str,
     date_from: str,
     date_to: str,
-    timeout_seconds: int = 20,
 ) -> list[NormalizedMatch]:
-    """Fetch matches for one competition from football-data.org v4."""
     params = urllib.parse.urlencode({"dateFrom": date_from, "dateTo": date_to})
     url = f"https://api.football-data.org/v4/competitions/{competition_code}/matches?{params}"
-    req = urllib.request.Request(
-        url,
-        headers={
-            "X-Auth-Token": api_key,
-            "User-Agent": "FootballCalendarSync/1.0",
-        },
+    payload = fetch_json(url, api_key)
+    return [normalize_api_match(m, competition_code) for m in (payload.get("matches") or [])]
+
+
+def fetch_competition_standings(api_key: str, competition_code: str) -> list[dict[str, Any]]:
+    url = f"https://api.football-data.org/v4/competitions/{competition_code}/standings"
+    payload = fetch_json(url, api_key)
+    standings_groups = payload.get("standings") or []
+    total_table = next(
+        (g.get("table") or [] for g in standings_groups if g.get("type") == "TOTAL"),
+        (standings_groups[0].get("table") or []) if standings_groups else [],
     )
-    with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
-        payload = json.loads(resp.read().decode("utf-8"))
-    raw_matches = payload.get("matches") or []
-    return [normalize_api_match(m, competition_code) for m in raw_matches]
+    rows: list[dict[str, Any]] = []
+    for entry in total_table[:20]:
+        team = entry.get("team") or {}
+        team_name = team.get("name") or "Unknown"
+        team_short = team.get("shortName") or team.get("tla") or team_name
+        rows.append(
+            {
+                "competitionCode": competition_code,
+                "rank": int(entry.get("position") or 0),
+                "teamName": team_name,
+                "teamZhName": localize_team(team_name, team_short),
+                "teamCrest": resolve_team_logo(team_name, team.get("crest")),
+                "played": int(entry.get("playedGames") or 0),
+                "won": int(entry.get("won") or 0),
+                "draw": int(entry.get("draw") or 0),
+                "lost": int(entry.get("lost") or 0),
+                "goalDifference": int(entry.get("goalDifference") or 0),
+                "points": int(entry.get("points") or 0),
+                "form": entry.get("form") or "",
+            }
+        )
+    return rows
 
 
 def generate_demo_matches(anchor_utc: dt.datetime | None = None) -> list[NormalizedMatch]:
-    """Generate deterministic demo fixtures around anchor_utc when no API key is configured."""
     now = (anchor_utc or dt.datetime.now(dt.timezone.utc)).replace(
         minute=0, second=0, microsecond=0
     )
@@ -223,7 +435,6 @@ def generate_demo_matches(anchor_utc: dt.datetime | None = None) -> list[Normali
     now_iso = format_utc_iso(now)
 
     templates: list[tuple[str, str, int, int, int, str, str, str, int | None, int | None, str]] = [
-        # (id, comp, day_offset, utc_hour, utc_min, home, away, status, home_score, away_score, venue)
         ("demo-1001", "PL", -2, 16, 30, "Arsenal FC", "Chelsea FC", "FINISHED", 2, 1, "Emirates Stadium"),
         ("demo-1002", "PD", -1, 20, 0, "Real Madrid CF", "FC Barcelona", "FINISHED", 3, 2, "Santiago Bernabéu"),
         ("demo-1003", "PL", 0, 12, 30, "Liverpool FC", "Manchester City FC", "TIMED", None, None, "Anfield"),
@@ -231,28 +442,22 @@ def generate_demo_matches(anchor_utc: dt.datetime | None = None) -> list[Normali
         ("demo-1005", "SA", 0, 19, 45, "FC Internazionale Milano", "AC Milan", "TIMED", None, None, "San Siro"),
         ("demo-1006", "CL", 1, 20, 0, "Paris Saint-Germain FC", "Real Madrid CF", "TIMED", None, None, "Parc des Princes"),
         ("demo-1007", "CL", 1, 20, 0, "Arsenal FC", "FC Bayern München", "TIMED", None, None, "Emirates Stadium"),
-        ("demo-1008", "PL", 2, 15, 0, "Manchester United FC", "Tottenham Hotspur FC", "TIMED", None, None, "Old Trafford"),
-        ("demo-1009", "PD", 2, 19, 0, "Club Atlético de Madrid", "FC Barcelona", "TIMED", None, None, "Cívitas Metropolitano"),
-        ("demo-1010", "SA", 3, 19, 45, "Juventus FC", "SSC Napoli", "TIMED", None, None, "Allianz Stadium"),
-        ("demo-1011", "FL1", 4, 19, 0, "Olympique de Marseille", "Paris Saint-Germain FC", "TIMED", None, None, "Stade Vélodrome"),
-        ("demo-1012", "BL1", 5, 17, 30, "Bayer 04 Leverkusen", "RB Leipzig", "POSTPONED", None, None, "BayArena"),
-        ("demo-1013", "PL", 6, 16, 30, "Chelsea FC", "Liverpool FC", "TIMED", None, None, "Stamford Bridge"),
-        ("demo-1014", "CL", 8, 20, 0, "Manchester City FC", "FC Internazionale Milano", "SCHEDULED", None, None, "Etihad Stadium"),
+        ("demo-1008", "INT", 2, 19, 45, "France", "Spain", "TIMED", None, None, "Stade de France"),
+        ("demo-1009", "WC", 3, 0, 0, "Argentina", "Brazil", "TIMED", None, None, "Estadio Monumental"),
+        ("demo-1010", "INT", 3, 11, 35, "China PR", "Japan", "TIMED", None, None, "工人体育场"),
+        ("demo-1011", "EC", 4, 19, 45, "England", "Germany", "TIMED", None, None, "Wembley Stadium"),
+        ("demo-1012", "PL", 5, 15, 0, "Manchester United FC", "Tottenham Hotspur FC", "TIMED", None, None, "Old Trafford"),
+        ("demo-1013", "PD", 5, 19, 0, "Club Atlético de Madrid", "FC Barcelona", "TIMED", None, None, "Cívitas Metropolitano"),
+        ("demo-1014", "SA", 6, 19, 45, "Juventus FC", "SSC Napoli", "TIMED", None, None, "Allianz Stadium"),
+        ("demo-1015", "FL1", 7, 19, 0, "Olympique de Marseille", "Paris Saint-Germain FC", "TIMED", None, None, "Stade Vélodrome"),
+        ("demo-1016", "BL1", 8, 17, 30, "Bayer 04 Leverkusen", "RB Leipzig", "POSTPONED", None, None, "BayArena"),
+        ("demo-1017", "INT", 9, 19, 45, "Portugal", "Netherlands", "TIMED", None, None, "Estádio da Luz"),
     ]
 
     result: list[NormalizedMatch] = []
     for idx, (
-        match_id,
-        comp_code,
-        day_offset,
-        hour,
-        minute,
-        home_name,
-        away_name,
-        status,
-        h_score,
-        a_score,
-        venue,
+        match_id, comp_code, day_offset, hour, minute,
+        home_name, away_name, status, h_score, a_score, venue,
     ) in enumerate(templates, start=1):
         meta = COMPETITION_META[comp_code]
         kickoff = base_day + dt.timedelta(days=day_offset, hours=hour, minutes=minute)
@@ -262,18 +467,20 @@ def generate_demo_matches(anchor_utc: dt.datetime | None = None) -> list[Normali
                 competitionCode=comp_code,
                 competitionName=meta["name"],
                 competitionZhName=meta["zhName"],
-                matchday=10 + (idx % 5),
-                stage="GROUP_STAGE" if comp_code == "CL" else "REGULAR_SEASON",
+                matchday=None if comp_code in {"INT", "WC", "EC"} else 12 + (idx % 3),
+                stage="INTERNATIONAL" if comp_code in {"INT", "WC", "EC"} else "REGULAR_SEASON",
                 utcDate=format_utc_iso(kickoff),
                 status=status,
                 homeTeamId=idx * 10 + 1,
                 homeTeamName=home_name,
                 homeTeamShortName=home_name.replace(" FC", "").replace(" CF", ""),
                 homeTeamZhName=localize_team(home_name),
+                homeTeamCrest=resolve_team_logo(home_name),
                 awayTeamId=idx * 10 + 2,
                 awayTeamName=away_name,
                 awayTeamShortName=away_name.replace(" FC", "").replace(" CF", ""),
                 awayTeamZhName=localize_team(away_name),
+                awayTeamCrest=resolve_team_logo(away_name),
                 homeScore=h_score,
                 awayScore=a_score,
                 venue=venue,
@@ -283,8 +490,87 @@ def generate_demo_matches(anchor_utc: dt.datetime | None = None) -> list[Normali
     return result
 
 
+def generate_demo_standings() -> list[dict[str, Any]]:
+    tables: dict[str, list[tuple[str, int, int, int, int, int, int, str]]] = {
+        "PL": [
+            ("Liverpool FC", 12, 10, 1, 1, 18, 31, "W,W,D,W,W"),
+            ("Arsenal FC", 12, 8, 4, 0, 14, 28, "W,D,W,W,W"),
+            ("Manchester City FC", 12, 8, 2, 2, 12, 26, "W,W,L,D,W"),
+            ("Chelsea FC", 12, 7, 2, 3, 9, 23, "D,W,W,L,W"),
+            ("Aston Villa FC", 12, 6, 2, 4, 5, 20, "W,L,D,W,D"),
+            ("Newcastle United FC", 12, 5, 4, 3, 4, 19, "D,W,W,L,D"),
+            ("Tottenham Hotspur FC", 12, 5, 3, 4, 3, 18, "L,W,D,W,L"),
+            ("Manchester United FC", 12, 4, 4, 4, 1, 16, "D,L,W,D,W"),
+        ],
+        "PD": [
+            ("FC Barcelona", 13, 11, 0, 2, 22, 33, "W,W,W,L,W"),
+            ("Real Madrid CF", 13, 9, 3, 1, 16, 30, "W,D,W,W,W"),
+            ("Club Atlético de Madrid", 13, 7, 5, 1, 11, 26, "W,W,D,W,D"),
+            ("Athletic Club", 13, 6, 5, 2, 7, 23, "D,W,D,W,W"),
+        ],
+        "BL1": [
+            ("FC Bayern München", 11, 9, 2, 0, 24, 29, "W,W,W,D,W"),
+            ("Bayer 04 Leverkusen", 11, 6, 5, 0, 12, 23, "D,W,D,W,W"),
+            ("RB Leipzig", 11, 6, 3, 2, 8, 21, "W,L,W,D,W"),
+            ("Borussia Dortmund", 11, 6, 1, 4, 5, 19, "W,L,W,W,L"),
+        ],
+        "SA": [
+            ("SSC Napoli", 12, 9, 1, 2, 13, 28, "W,W,L,W,W"),
+            ("FC Internazionale Milano", 12, 8, 3, 1, 15, 27, "D,W,W,W,D"),
+            ("Atalanta BC", 12, 8, 1, 3, 14, 25, "W,W,W,W,L"),
+            ("Juventus FC", 12, 6, 6, 0, 11, 24, "D,W,D,D,W"),
+            ("AC Milan", 12, 6, 3, 3, 6, 21, "L,W,D,W,D"),
+            ("AS Roma", 12, 4, 4, 4, 2, 16, "D,L,W,D,W"),
+        ],
+        "FL1": [
+            ("Paris Saint-Germain FC", 12, 10, 2, 0, 23, 32, "W,W,W,D,W"),
+            ("AS Monaco FC", 12, 8, 2, 2, 12, 26, "W,D,W,L,W"),
+            ("Olympique de Marseille", 12, 7, 2, 3, 9, 23, "L,W,W,D,W"),
+            ("Olympique Lyonnais", 12, 6, 3, 3, 6, 21, "W,D,W,W,L"),
+        ],
+        "CL": [
+            ("Liverpool FC", 5, 5, 0, 0, 11, 15, "W,W,W,W,W"),
+            ("FC Internazionale Milano", 5, 4, 1, 0, 7, 13, "D,W,W,W,W"),
+            ("FC Barcelona", 5, 4, 0, 1, 10, 12, "L,W,W,W,W"),
+            ("Arsenal FC", 5, 3, 1, 1, 6, 10, "W,D,W,L,W"),
+            ("FC Bayern München", 5, 3, 0, 2, 5, 9, "W,L,L,W,W"),
+            ("Real Madrid CF", 5, 3, 0, 2, 3, 9, "W,L,W,L,W"),
+        ],
+    }
+
+    rows: list[dict[str, Any]] = []
+    for code, items in tables.items():
+        for rank, (name, p, w, d, l, gd, pts, form) in enumerate(items, start=1):
+            rows.append(
+                {
+                    "competitionCode": code,
+                    "rank": rank,
+                    "teamName": name,
+                    "teamZhName": localize_team(name),
+                    "teamCrest": resolve_team_logo(name),
+                    "played": p,
+                    "won": w,
+                    "draw": d,
+                    "lost": l,
+                    "goalDifference": gd,
+                    "points": pts,
+                    "form": form,
+                }
+            )
+    return rows
+
+
+def enrich_players() -> list[dict[str, Any]]:
+    enriched = []
+    for p in STAR_PLAYERS_CATALOG:
+        item = dict(p)
+        item["clubCrestUrl"] = resolve_team_logo(p["clubName"])
+        item["nationalCrestUrl"] = resolve_team_logo(p["nationalName"])
+        enriched.append(item)
+    return enriched
+
+
 def ics_escape(value: str) -> str:
-    """Escape special characters according to RFC 5545 text rules."""
     return (
         value.replace("\\", "\\\\")
         .replace("\r\n", "\\n")
@@ -295,7 +581,6 @@ def ics_escape(value: str) -> str:
 
 
 def fold_ics_line(line: str, limit: int = 75) -> str:
-    """Fold an iCalendar line cleanly at octets/characters boundary."""
     if len(line) <= limit:
         return line
     chunks = [line[:limit]]
@@ -307,7 +592,6 @@ def fold_ics_line(line: str, limit: int = 75) -> str:
 
 
 def build_ics(matches: list[NormalizedMatch], calendar_name: str, generated_at: dt.datetime) -> str:
-    """Build an RFC 5545 iCalendar string from normalized matches."""
     stamp = generated_at.astimezone(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     lines = [
         "BEGIN:VCALENDAR",
@@ -320,7 +604,6 @@ def build_ics(matches: list[NormalizedMatch], calendar_name: str, generated_at: 
         "REFRESH-INTERVAL;VALUE=DURATION:PT6H",
         "X-PUBLISHED-TTL:PT6H",
     ]
-
     for m in matches:
         start_dt = parse_utc_iso(m.utcDate)
         end_dt = start_dt + dt.timedelta(minutes=110)
@@ -352,24 +635,36 @@ def build_ics(matches: list[NormalizedMatch], calendar_name: str, generated_at: 
             event_lines.append(f"LOCATION:{ics_escape(m.venue)}")
         event_lines.append("END:VEVENT")
         lines.extend(fold_ics_line(line) for line in event_lines)
-
     lines.append("END:VCALENDAR")
     return "\r\n".join(lines) + "\r\n"
 
 
+def _logo_img_html(url: str, label: str, size: int = 30) -> str:
+    initial = html.escape((label[:1] or "?"))
+    if url:
+        return (
+            f'<img class="crest" style="width:{size}px;height:{size}px;" '
+            f'src="{html.escape(url)}" alt="{html.escape(label)}" loading="lazy" '
+            f'onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'inline-flex\'" />'
+            f'<span class="crest-fallback" style="display:none;width:{size}px;height:{size}px;">{initial}</span>'
+        )
+    return f'<span class="crest-fallback" style="width:{size}px;height:{size}px;">{initial}</span>'
+
+
 def build_index_html(
     matches: list[NormalizedMatch],
+    standings: list[dict[str, Any]],
+    players: list[dict[str, Any]],
     mode: str,
     generated_at: dt.datetime,
     competitions: list[str],
 ) -> str:
-    """Build a clean, self-contained HTML dashboard for GitHub Pages."""
     bj_tz = dt.timezone(dt.timedelta(hours=8))
     gen_bj = generated_at.astimezone(bj_tz).strftime("%Y-%m-%d %H:%M UTC+8")
     mode_badge = (
-        "Live API 实时同步模式 (football-data.org)"
+        "Live API 实时同步中"
         if mode == "live_api"
-        else "演示赛程模式（配置 FOOTBALL_DATA_API_KEY Secret 后自动切换真实赛程）"
+        else "演示赛程（配置 FOOTBALL_DATA_API_KEY 后切换实时赛程）"
     )
 
     cards_html: list[str] = []
@@ -384,17 +679,24 @@ def build_index_html(
         )
         status_zh = STATUS_ZH_MAP.get(m.status, m.status)
         status_cls = "postponed" if m.status in {"POSTPONED", "CANCELLED"} else "normal"
+        is_nat = "true" if m.competitionCode in {"WC", "EC", "INT"} else "false"
         cards_html.append(
             f"""
-            <article class="card" data-comp="{html.escape(m.competitionCode)}">
+            <article class="card match-card" data-comp="{html.escape(m.competitionCode)}" data-nat="{is_nat}">
               <div class="card-top">
                 <span class="league">{html.escape(m.competitionZhName)}</span>
-                <span class="time">{html.escape(date_str)} (北京时间) {early_tag}</span>
+                <span class="time tnum">{html.escape(date_str)} {early_tag}</span>
               </div>
               <div class="teams">
-                <span class="team home">{html.escape(m.homeTeamZhName)}</span>
-                <span class="score">{html.escape(score_display)}</span>
-                <span class="team away">{html.escape(m.awayTeamZhName)}</span>
+                <div class="team home">
+                  {_logo_img_html(m.homeTeamCrest, m.homeTeamZhName, 30)}
+                  <span>{html.escape(m.homeTeamZhName)}</span>
+                </div>
+                <span class="score tnum">{html.escape(score_display)}</span>
+                <div class="team away">
+                  <span>{html.escape(m.awayTeamZhName)}</span>
+                  {_logo_img_html(m.awayTeamCrest, m.awayTeamZhName, 30)}
+                </div>
               </div>
               <div class="card-foot">
                 <span class="status {status_cls}">{html.escape(status_zh)}</span>
@@ -404,102 +706,191 @@ def build_index_html(
             """
         )
 
-    ics_links = " ".join(
-        f'<a class="chip" href="./ics/{html.escape(c)}.ics">{html.escape(COMPETITION_META.get(c, {}).get("zhName", c))}.ics</a>'
-        for c in competitions
-    )
+    standings_by_comp: dict[str, list[dict[str, Any]]] = {}
+    for row in standings:
+        standings_by_comp.setdefault(row["competitionCode"], []).append(row)
+
+    standings_tables_html: list[str] = []
+    for idx, code in enumerate(STANDINGS_COMPETITIONS):
+        rows = standings_by_comp.get(code, [])
+        if not rows:
+            continue
+        tr_html = []
+        for r in rows[:10]:
+            tr_html.append(
+                f"""
+                <tr>
+                  <td class="rank tnum">{r['rank']}</td>
+                  <td class="tname">{_logo_img_html(r.get('teamCrest', ''), r['teamZhName'], 22)}<span>{html.escape(r['teamZhName'])}</span></td>
+                  <td class="tnum">{r['played']}</td>
+                  <td class="tnum">{r['goalDifference']:+d}</td>
+                  <td class="pts tnum">{r['points']}</td>
+                </tr>
+                """
+            )
+        hidden = "" if idx == 0 else 'style="display:none;"'
+        standings_tables_html.append(
+            f'<table class="st-table" data-st="{html.escape(code)}" {hidden}>'
+            f'<thead><tr><th>#</th><th>球队</th><th>赛</th><th>净胜</th><th>积分</th></tr></thead>'
+            f'<tbody>{"".join(tr_html)}</tbody></table>'
+        )
+
+    players_html: list[str] = []
+    for p in players:
+        players_html.append(
+            f"""
+            <article class="card player-card">
+              <div class="p-top">
+                <img class="avatar" src="{html.escape(p['portraitUrl'])}" alt="{html.escape(p['zhName'])}" loading="lazy" />
+                <div>
+                  <div class="p-name">{html.escape(p['zhName'])} <span class="p-num">#{p['shirtNumber']}</span></div>
+                  <div class="p-sub">{html.escape(p['nationalityZh'])} · {html.escape(p['positionZh'])}</div>
+                </div>
+              </div>
+              <div class="p-teams">
+                <span class="p-tag">{_logo_img_html(p.get('clubCrestUrl', ''), p['clubZhName'], 18)}{html.escape(p['clubZhName'])}</span>
+                <span class="p-tag">{_logo_img_html(p.get('nationalCrestUrl', ''), p['nationalZhName'], 18)}{html.escape(p['nationalZhName'])}</span>
+              </div>
+            </article>
+            """
+        )
 
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>足球赛事日历 · 自动同步订阅中心</title>
+  <title>足球赛事日历 · 红白苹果风订阅中心</title>
   <style>
     :root {{
-      --bg: #0b1310;
-      --surface: #13201b;
-      --border: #21382e;
-      --text: #ecf5f0;
-      --muted: #9ab3a7;
-      --accent: #22c55e;
-      --warn: #f59e0b;
-      --danger: #ef4444;
+      --bg: #F2F2F7;
+      --surface: #FFFFFF;
+      --border: #E5E5EA;
+      --text: #1C1C1E;
+      --muted: #6E6E73;
+      --red: #E11D48;
+      --red-tint: #FFF1F2;
+      --warn: #D97706;
     }}
     * {{ box-sizing: border-box; }}
     body {{
-      margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: radial-gradient(circle at top, #13281e, var(--bg) 55%);
-      color: var(--text); line-height: 1.5; padding: 24px 16px 48px;
+      margin: 0; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+      background: var(--bg); color: var(--text); line-height: 1.45;
     }}
-    .wrap {{ max-width: 900px; margin: 0 auto; }}
-    header {{
-      background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
-      padding: 20px; margin-bottom: 20px;
+    .tnum {{ font-variant-numeric: tabular-nums; }}
+    .topbar {{
+      position: sticky; top: 0; z-index: 20;
+      background: rgba(255,255,255,0.92); backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border); padding: 14px 20px;
     }}
-    h1 {{ margin: 0 0 8px; font-size: 1.5rem; }}
-    .sub {{ color: var(--muted); font-size: 0.92rem; margin: 0 0 12px; }}
+    .topbar-inner, .wrap {{ max-width: 1120px; margin: 0 auto; }}
+    .topbar-inner {{ display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }}
+    .brand {{ display: flex; align-items: center; gap: 12px; }}
+    .logo-box {{
+      width: 40px; height: 40px; border-radius: 12px; background: var(--red); color: #fff;
+      display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 800;
+    }}
+    h1 {{ margin: 0; font-size: 1.2rem; font-weight: 800; letter-spacing: -0.02em; }}
+    .sub {{ font-size: 0.82rem; color: var(--muted); }}
+    .actions {{ display: flex; flex-wrap: wrap; gap: 8px; }}
+    .btn {{
+      text-decoration: none; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+      padding: 8px 14px; border-radius: 12px; font-size: 0.84rem; font-weight: 600; cursor: pointer;
+    }}
+    .btn.primary {{ background: var(--red); color: #fff; border-color: var(--red); }}
+    .wrap {{ padding: 20px 16px 56px; display: grid; grid-template-columns: 1fr; gap: 22px; }}
+    @media (min-width: 960px) {{ .wrap {{ grid-template-columns: 2fr 1fr; align-items: start; }} }}
+    .section-head {{ display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }}
+    .section-title {{ font-size: 1.15rem; font-weight: 800; margin: 0; }}
+    .filters {{ display: flex; flex-wrap: wrap; gap: 6px; }}
     .pill {{
-      display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 0.8rem;
-      background: rgba(34, 197, 94, 0.14); color: var(--accent); border: 1px solid rgba(34, 197, 94, 0.3);
+      background: var(--surface); color: var(--text); border: 1px solid var(--border);
+      padding: 6px 12px; border-radius: 999px; font-size: 0.8rem; font-weight: 600; cursor: pointer;
     }}
-    .actions {{ display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }}
-    .btn, .chip {{
-      text-decoration: none; color: var(--text); background: #1a2d25; border: 1px solid var(--border);
-      padding: 8px 12px; border-radius: 10px; font-size: 0.86rem; cursor: pointer;
-    }}
-    .btn.primary {{ background: var(--accent); color: #052010; font-weight: 600; border-color: var(--accent); }}
-    .filters {{ display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 18px; }}
-    .filters button {{
-      background: var(--surface); color: var(--muted); border: 1px solid var(--border);
-      padding: 6px 12px; border-radius: 999px; cursor: pointer; font-size: 0.85rem;
-    }}
-    .filters button.active {{ background: var(--accent); color: #052010; font-weight: 600; border-color: var(--accent); }}
-    .grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }}
+    .pill.active {{ background: var(--red); color: #fff; border-color: var(--red); }}
+    .grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 12px; }}
     .card {{
-      background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
-      padding: 14px; display: flex; flex-direction: column; gap: 10px;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 18px;
+      padding: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.03);
     }}
-    .card-top, .card-foot {{ display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; color: var(--muted); }}
-    .league {{ font-weight: 600; color: var(--accent); }}
-    .teams {{ display: flex; align-items: center; justify-content: space-between; gap: 8px; font-weight: 600; font-size: 1rem; }}
-    .team {{ flex: 1; }}
-    .team.away {{ text-align: right; }}
-    .score {{ padding: 2px 10px; border-radius: 8px; background: #0f1915; border: 1px solid var(--border); font-variant-numeric: tabular-nums; }}
-    .badge.early {{ background: rgba(245, 158, 11, 0.16); color: var(--warn); padding: 1px 6px; border-radius: 6px; margin-left: 4px; }}
-    .status.postponed {{ color: var(--danger); font-weight: 600; }}
-    code {{ background: #0f1915; padding: 2px 6px; border-radius: 6px; font-size: 0.82rem; }}
+    .card-top, .card-foot {{ display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem; color: var(--muted); }}
+    .league {{ font-weight: 700; color: var(--red); }}
+    .teams {{ display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 12px 0; }}
+    .team {{ flex: 1; display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 0.94rem; min-width: 0; }}
+    .team.away {{ justify-content: flex-end; text-align: right; }}
+    .team span {{ overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+    .crest {{ object-fit: contain; border-radius: 999px; background: #fff; flex-shrink: 0; }}
+    .crest-fallback {{
+      display: inline-flex; align-items: center; justify-content: center; border-radius: 999px;
+      background: var(--red-tint); color: var(--red); font-weight: 800; font-size: 0.75rem; flex-shrink: 0;
+    }}
+    .score {{
+      padding: 4px 10px; border-radius: 10px; background: var(--bg); font-weight: 800; font-size: 0.88rem;
+    }}
+    .badge.early {{ background: #FEF3C7; color: var(--warn); padding: 1px 6px; border-radius: 6px; font-size: 0.72rem; margin-left: 4px; }}
+    .status.postponed {{ color: var(--red); font-weight: 700; }}
+    .st-table {{ width: 100%; border-collapse: collapse; font-size: 0.82rem; }}
+    .st-table th {{ text-align: left; color: var(--muted); font-weight: 700; padding: 8px 6px; border-bottom: 1px solid var(--border); }}
+    .st-table td {{ padding: 8px 6px; border-bottom: 1px solid #F2F2F7; }}
+    .st-table .tname {{ display: flex; align-items: center; gap: 6px; font-weight: 600; }}
+    .st-table .pts {{ font-weight: 800; color: var(--red); }}
+    .players-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }}
+    .p-top {{ display: flex; align-items: center; gap: 12px; }}
+    .avatar {{ width: 54px; height: 54px; border-radius: 999px; object-fit: cover; object-position: top; background: var(--bg); border: 2px solid var(--red-tint); }}
+    .p-name {{ font-weight: 800; font-size: 0.96rem; }}
+    .p-num {{ color: var(--red); font-size: 0.84rem; }}
+    .p-sub {{ color: var(--muted); font-size: 0.78rem; margin-top: 2px; }}
+    .p-teams {{ display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #F2F2F7; }}
+    .p-tag {{ display: inline-flex; align-items: center; gap: 5px; font-size: 0.76rem; background: var(--bg); padding: 4px 8px; border-radius: 999px; font-weight: 600; }}
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <header>
-      <h1>⚽ 足球赛事日历 · 自动更新订阅源</h1>
-      <p class="sub">最近更新：{html.escape(gen_bj)} · 共 {len(matches)} 场近期/未来赛程</p>
-      <span class="pill">{html.escape(mode_badge)}</span>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <div class="logo-box">⚽</div>
+        <div>
+          <h1>足球赛事日历 · 自动更新中心</h1>
+          <div class="sub">最近同步：{html.escape(gen_bj)} · {html.escape(mode_badge)}</div>
+        </div>
+      </div>
       <div class="actions">
         <a class="btn primary" href="./football.ics">📅 订阅全部赛程 (.ics)</a>
-        <a class="btn" href="./fixtures.json">🔗 查看 JSON 接口 (fixtures.json)</a>
+        <a class="btn" href="./fixtures.json">🔗 JSON 接口</a>
         <button class="btn" onclick="copyFeedUrl()">📋 复制 App 订阅地址</button>
       </div>
-      <div class="actions" style="margin-top:10px; align-items:center;">
-        <span style="font-size:0.82rem;color:var(--muted);">单联赛日历：</span>
-        {ics_links}
-      </div>
-      <p class="sub" style="margin-top:10px;">
-        安卓 App 接入方式：打开 App → 设置 → 数据源选择 <strong>GitHub Pages 订阅源</strong> → 填入本页地址或 <code>fixtures.json</code> 完整地址即可后台自动同步。
-      </p>
-    </header>
-
-    <div class="filters" id="filters">
-      <button class="active" data-filter="ALL">全部赛事</button>
-      {"".join(f'<button data-filter="{html.escape(c)}">{html.escape(COMPETITION_META.get(c, {}).get("zhName", c))}</button>' for c in competitions)}
     </div>
+  </header>
 
-    <section class="grid" id="cards">
-      {"".join(cards_html)}
+  <main class="wrap">
+    <section>
+      <div class="section-head">
+        <h2 class="section-title">近期与未来赛程（含俱乐部 &amp; 国家队）</h2>
+        <div class="filters" id="filters">
+          <button class="pill active" data-filter="ALL">全部</button>
+          <button class="pill" data-filter="NAT">国家队</button>
+          {"".join(f'<button class="pill" data-filter="{html.escape(c)}">{html.escape(COMPETITION_META.get(c, {}).get("zhName", c))}</button>' for c in competitions if c not in {"WC", "EC", "INT"})}
+        </div>
+      </div>
+      <div class="grid" id="cards">{"".join(cards_html)}</div>
+
+      <div style="margin-top:28px;">
+        <div class="section-head"><h2 class="section-title">热门球星库（真人头像 &amp; 俱乐部/国家队关联）</h2></div>
+        <div class="players-grid">{"".join(players_html)}</div>
+      </div>
     </section>
-  </div>
+
+    <aside>
+      <div class="section-head">
+        <h2 class="section-title">联赛积分榜</h2>
+        <div class="filters" id="st-filters">
+          {"".join(f'<button class="pill {"active" if i == 0 else ""}" data-st="{html.escape(c)}">{html.escape(COMPETITION_META.get(c, {}).get("zhName", c))}</button>' for i, c in enumerate(STANDINGS_COMPETITIONS))}
+        </div>
+      </div>
+      <div class="card">{"".join(standings_tables_html)}</div>
+    </aside>
+  </main>
+
   <script>
     function copyFeedUrl() {{
       const url = new URL('./fixtures.json', window.location.href).href;
@@ -510,8 +901,21 @@ def build_index_html(
         document.querySelectorAll('#filters button').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         const target = btn.dataset.filter;
-        document.querySelectorAll('#cards .card').forEach(card => {{
-          card.style.display = (target === 'ALL' || card.dataset.comp === target) ? 'flex' : 'none';
+        document.querySelectorAll('#cards .match-card').forEach(card => {{
+          const show = target === 'ALL'
+            || (target === 'NAT' && card.dataset.nat === 'true')
+            || card.dataset.comp === target;
+          card.style.display = show ? 'block' : 'none';
+        }});
+      }});
+    }});
+    document.querySelectorAll('#st-filters button').forEach(btn => {{
+      btn.addEventListener('click', () => {{
+        document.querySelectorAll('#st-filters button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const target = btn.dataset.st;
+        document.querySelectorAll('.st-table').forEach(tbl => {{
+          tbl.style.display = tbl.dataset.st === target ? 'table' : 'none';
         }});
       }});
     }});
@@ -524,11 +928,12 @@ def build_index_html(
 def write_feed_outputs(
     output_dir: pathlib.Path,
     matches: list[NormalizedMatch],
+    standings: list[dict[str, Any]],
+    players: list[dict[str, Any]],
     mode: str,
     competitions: list[str],
     generated_at: dt.datetime | None = None,
 ) -> dict[str, pathlib.Path]:
-    """Write fixtures.json, football.ics, per-competition .ics files, and index.html."""
     now = (generated_at or dt.datetime.now(dt.timezone.utc)).astimezone(dt.timezone.utc)
     sorted_matches = sorted(matches, key=lambda m: (m.utcDate, m.competitionCode, m.id))
 
@@ -537,7 +942,7 @@ def write_feed_outputs(
     ics_dir.mkdir(parents=True, exist_ok=True)
 
     payload = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "generatedAtUtc": format_utc_iso(now),
         "mode": mode,
         "competitions": [
@@ -545,11 +950,13 @@ def write_feed_outputs(
                 "code": c,
                 "name": COMPETITION_META.get(c, {}).get("name", c),
                 "zhName": COMPETITION_META.get(c, {}).get("zhName", c),
-                "colorHex": COMPETITION_META.get(c, {}).get("color", "#1E88E5"),
+                "colorHex": COMPETITION_META.get(c, {}).get("color", "#E11D48"),
             }
             for c in competitions
         ],
         "matches": [m.to_dict() for m in sorted_matches],
+        "standings": standings,
+        "players": players,
     }
 
     fixtures_path = output_dir / "fixtures.json"
@@ -566,49 +973,63 @@ def write_feed_outputs(
         )
 
     index_path = output_dir / "index.html"
-    index_path.write_text(build_index_html(sorted_matches, mode, now, competitions), encoding="utf-8")
+    index_path.write_text(
+        build_index_html(sorted_matches, standings, players, mode, now, competitions),
+        encoding="utf-8",
+    )
 
     return {"fixtures_json": fixtures_path, "football_ics": ics_path, "index_html": index_path}
 
 
-def collect_matches(
+def collect_data(
     api_key: str | None,
     competitions: list[str],
     days_back: int = 3,
     days_ahead: int = 21,
     rate_limit_sleep: float = 6.2,
-) -> tuple[list[NormalizedMatch], str]:
-    """Fetch live API matches if api_key is given, falling back to demo fixtures on empty/error."""
+) -> tuple[list[NormalizedMatch], list[dict[str, Any]], str]:
     now = dt.datetime.now(dt.timezone.utc)
     if not api_key:
-        return generate_demo_matches(now), "demo_fallback"
+        return generate_demo_matches(now), generate_demo_standings(), "demo_fallback"
 
     date_from = (now - dt.timedelta(days=days_back)).strftime("%Y-%m-%d")
     date_to = (now + dt.timedelta(days=days_ahead)).strftime("%Y-%m-%d")
 
     collected: dict[str, NormalizedMatch] = {}
+    standings: list[dict[str, Any]] = []
     errors: list[str] = []
 
-    for idx, code in enumerate(competitions):
+    api_comps = [c for c in competitions if c != "INT"]
+    for idx, code in enumerate(api_comps):
         if idx > 0 and rate_limit_sleep > 0:
             time.sleep(rate_limit_sleep)
         try:
             for match in fetch_competition_matches(api_key, code, date_from, date_to):
                 collected[match.id] = match
         except urllib.error.HTTPError as exc:
-            errors.append(f"{code}: HTTP {exc.code}")
+            errors.append(f"{code} matches: HTTP {exc.code}")
             if exc.code == 429:
                 time.sleep(max(rate_limit_sleep, 10.0))
         except Exception as exc:  # noqa: BLE001
-            errors.append(f"{code}: {exc}")
+            errors.append(f"{code} matches: {exc}")
+
+    for code in STANDINGS_COMPETITIONS:
+        if rate_limit_sleep > 0:
+            time.sleep(rate_limit_sleep)
+        try:
+            standings.extend(fetch_competition_standings(api_key, code))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{code} standings: {exc}")
 
     if not collected:
         print(f"[warn] No live matches fetched ({errors}); falling back to demo feed.", file=sys.stderr)
-        return generate_demo_matches(now), "demo_fallback"
+        return generate_demo_matches(now), generate_demo_standings(), "demo_fallback"
 
+    if not standings:
+        standings = generate_demo_standings()
     if errors:
-        print(f"[warn] Partial competition fetch warnings: {errors}", file=sys.stderr)
-    return list(collected.values()), "live_api"
+        print(f"[warn] Partial API fetch warnings: {errors}", file=sys.stderr)
+    return list(collected.values()), standings, "live_api"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -617,30 +1038,33 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--competitions",
         default=",".join(DEFAULT_COMPETITIONS),
-        help="Comma-separated competition codes (e.g. PL,PD,BL1,SA,FL1,CL).",
+        help="Comma-separated competition codes.",
     )
-    parser.add_argument("--days-back", type=int, default=3, help="Days in the past to include.")
-    parser.add_argument("--days-ahead", type=int, default=21, help="Days in the future to include.")
-    parser.add_argument("--sleep", type=float, default=6.2, help="Delay between competition API calls.")
+    parser.add_argument("--days-back", type=int, default=3)
+    parser.add_argument("--days-ahead", type=int, default=21)
+    parser.add_argument("--sleep", type=float, default=6.2)
     args = parser.parse_args(argv)
 
     competitions = [c.strip().upper() for c in args.competitions.split(",") if c.strip()]
     api_key = os.environ.get("FOOTBALL_DATA_API_KEY", "").strip() or None
 
-    matches, mode = collect_matches(
+    matches, standings, mode = collect_data(
         api_key=api_key,
         competitions=competitions,
         days_back=args.days_back,
         days_ahead=args.days_ahead,
         rate_limit_sleep=args.sleep,
     )
+    players = enrich_players()
     outputs = write_feed_outputs(
         output_dir=pathlib.Path(args.output_dir),
         matches=matches,
+        standings=standings,
+        players=players,
         mode=mode,
         competitions=competitions,
     )
-    print(f"Generated {len(matches)} matches in mode={mode}: {outputs['fixtures_json']}")
+    print(f"Generated {len(matches)} matches, {len(standings)} standing rows, {len(players)} stars in mode={mode}: {outputs['fixtures_json']}")
     return 0
 
 

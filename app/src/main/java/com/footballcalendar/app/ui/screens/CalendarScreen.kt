@@ -28,14 +28,15 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.EventAvailable
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.StarBorder
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -48,25 +49,49 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.footballcalendar.app.model.CompetitionCatalog
 import com.footballcalendar.app.model.MatchItem
 import com.footballcalendar.app.model.ScheduleChange
+import com.footballcalendar.app.model.StandingEntry
 import com.footballcalendar.app.ui.CalendarUiState
-import com.footballcalendar.app.ui.theme.AmberHighlight
+import com.footballcalendar.app.ui.components.AppleSegmentedControl
+import com.footballcalendar.app.ui.components.TeamCrest
+import com.footballcalendar.app.ui.theme.AmberTint
+import com.footballcalendar.app.ui.theme.AmberWarm
+import com.footballcalendar.app.ui.theme.AppleCanvas
+import com.footballcalendar.app.ui.theme.AppleDivider
+import com.footballcalendar.app.ui.theme.AppleLiveRed
+import com.footballcalendar.app.ui.theme.AppleRed
+import com.footballcalendar.app.ui.theme.AppleRedBorder
+import com.footballcalendar.app.ui.theme.AppleRedDeep
+import com.footballcalendar.app.ui.theme.AppleRedTint
+import com.footballcalendar.app.ui.theme.InkPrimary
+import com.footballcalendar.app.ui.theme.InkSecondary
+import com.footballcalendar.app.ui.theme.InkTertiary
 import com.footballcalendar.app.util.MatchTimeFormatter
+import kotlinx.coroutines.delay
 import java.time.DayOfWeek
+import java.time.Duration
+import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.temporal.TemporalAdjusters
@@ -80,157 +105,226 @@ fun CalendarScreen(
     onNextMonth: () -> Unit,
     onJumpToday: () -> Unit,
     onToggleExpanded: () -> Unit,
-    onToggleOnlyFavorites: () -> Unit,
+    onSelectFilterTab: (Int) -> Unit,
     onSelectLeagueFilter: (String?) -> Unit,
     onRefresh: () -> Unit,
     onDismissChanges: () -> Unit,
     onOpenMatchDetail: (MatchItem) -> Unit,
     onCloseMatchDetail: () -> Unit,
     onToggleFavoriteTeam: (String) -> Unit,
+    onToggleWatchlist: (String) -> Unit,
     onBuildCalendarIntent: (MatchItem) -> Intent,
     onBuildShareIcsIntent: (List<MatchItem>, String) -> Intent?,
 ) {
     val context = LocalContext.current
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        TopAppBar(
-            title = {
-                Column {
-                    Text(
-                        text = "足球赛事日历",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Text(
-                        text = state.prefs.lastSyncSummary,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            },
-            actions = {
-                IconButton(onClick = onRefresh, enabled = !state.isSyncing) {
-                    if (state.isSyncing) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            strokeWidth = 2.dp,
+    PullToRefreshBox(
+        isRefreshing = state.isSyncing,
+        onRefresh = onRefresh,
+        modifier = Modifier
+            .fillMaxSize()
+            .background(AppleCanvas),
+    ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            // 1. Apple Large Title Header
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 20.dp, end = 16.dp, top = 12.dp, bottom = 2.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Bottom,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "${MatchTimeFormatter.formatYearMonth(state.currentMonth.atDay(1))} · ${state.prefs.lastSyncSummary}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = AppleRed,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Filled.Refresh,
-                            contentDescription = "立即同步",
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "赛事日历",
+                            fontSize = 28.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = InkPrimary,
+                            letterSpacing = (-0.5).sp,
                         )
                     }
+                    Surface(
+                        modifier = Modifier.size(38.dp),
+                        shape = CircleShape,
+                        color = Color.White,
+                        shadowElevation = 1.dp,
+                        onClick = { if (!state.isSyncing) onRefresh() },
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            if (state.isSyncing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                    color = AppleRed,
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Filled.Refresh,
+                                    contentDescription = "立即同步",
+                                    tint = AppleRed,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                        }
+                    }
                 }
-            },
-        )
+            }
 
-        // Filter row: Only Favorites + Followed Competitions
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            FilterChip(
-                selected = state.onlyFavorites,
-                onClick = onToggleOnlyFavorites,
-                label = { Text("只看主队") },
-                leadingIcon = {
-                    Icon(
-                        imageVector = if (state.onlyFavorites) Icons.Filled.Star else Icons.Outlined.StarBorder,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                    )
-                },
-            )
-            FilterChip(
-                selected = state.selectedLeagueFilter == null,
-                onClick = { onSelectLeagueFilter(null) },
-                label = { Text("全部联赛") },
-            )
-            CompetitionCatalog.all
-                .filter { it.code in state.prefs.followedCompetitions }
-                .forEach { comp ->
-                    FilterChip(
-                        selected = state.selectedLeagueFilter == comp.code,
-                        onClick = { onSelectLeagueFilter(comp.code) },
-                        label = { Text(comp.zhName) },
-                    )
-                }
-        }
-
-        // Calendar grid card (Month or Week view)
-        CalendarGridCard(
-            currentMonth = state.currentMonth,
-            selectedDate = state.selectedDate,
-            isExpanded = state.isMonthExpanded,
-            matchesByDate = state.matchesByDate,
-            favoriteTeams = state.prefs.favoriteTeams,
-            onSelectDate = onSelectDate,
-            onPrevMonth = onPrevMonth,
-            onNextMonth = onNextMonth,
-            onJumpToday = onJumpToday,
-            onToggleExpanded = onToggleExpanded,
-        )
-
-        // Schedule changes alert banner
-        if (state.recentChanges.isNotEmpty()) {
-            ChangesBanner(
-                changes = state.recentChanges,
-                onDismiss = onDismissChanges,
-            )
-        }
-
-        // Selected day matches list with Pull-to-Refresh
-        PullToRefreshBox(
-            isRefreshing = state.isSyncing,
-            onRefresh = onRefresh,
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-        ) {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
+            // 2. Hero Next Match Countdown Card
+            if (state.heroMatch != null) {
                 item {
-                    DaySectionHeader(
-                        date = state.selectedDate,
-                        matchCount = state.selectedDayMatches.size,
-                        watchNightGrouping = state.prefs.watchNightGrouping,
+                    HeroNextMatchCard(
+                        match = state.heroMatch,
+                        teamRankByName = state.teamRankByName,
+                        onClick = { onOpenMatchDetail(state.heroMatch) },
                     )
                 }
+            }
 
-                if (state.selectedDayMatches.isEmpty()) {
-                    item {
-                        EmptyDayCard(
-                            onRefresh = onRefresh,
-                            upcomingMatches = state.filteredMatches
-                                .filter { !it.status.isCancelledOrPostponed }
-                                .take(3),
-                            onSelectDate = { match ->
-                                MatchTimeFormatter.displayDateFor(
-                                    utcIso = match.utcDate,
-                                    watchNightGrouping = state.prefs.watchNightGrouping,
-                                )?.let(onSelectDate)
-                            },
+            // 3. Apple Segmented Control + League Filter Pills
+            item {
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    AppleSegmentedControl(
+                        options = listOf(
+                            "全部关注",
+                            "★ 主队",
+                            "♥ 必看(${state.prefs.watchlistMatchIds.size})",
+                        ),
+                        selectedIndex = state.calendarFilterTab,
+                        onSelect = onSelectFilterTab,
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        LeaguePill(
+                            label = "全部",
+                            selected = state.selectedLeagueFilter == null,
+                            onClick = { onSelectLeagueFilter(null) },
+                        )
+                        LeaguePill(
+                            label = "国家队",
+                            selected = state.selectedLeagueFilter == "NAT",
+                            onClick = { onSelectLeagueFilter("NAT") },
+                        )
+                        CompetitionCatalog.all
+                            .filter { it.code in state.prefs.followedCompetitions && it.code !in setOf("WC", "EC", "INT") }
+                            .forEach { comp ->
+                                LeaguePill(
+                                    label = comp.zhName,
+                                    selected = state.selectedLeagueFilter == comp.code,
+                                    onClick = { onSelectLeagueFilter(comp.code) },
+                                )
+                            }
+                    }
+                }
+            }
+
+            // 4. Apple Clean Calendar Card
+            item {
+                AppleCalendarCard(
+                    currentMonth = state.currentMonth,
+                    selectedDate = state.selectedDate,
+                    isExpanded = state.isMonthExpanded,
+                    matchesByDate = state.matchesByDate,
+                    favoriteTeams = state.prefs.favoriteTeams,
+                    onSelectDate = onSelectDate,
+                    onPrevMonth = onPrevMonth,
+                    onNextMonth = onNextMonth,
+                    onJumpToday = onJumpToday,
+                    onToggleExpanded = onToggleExpanded,
+                )
+            }
+
+            // 5. Recent Schedule Diff Banner
+            if (state.recentChanges.isNotEmpty()) {
+                item {
+                    ChangesAlertCard(
+                        changes = state.recentChanges,
+                        onDismiss = onDismissChanges,
+                    )
+                }
+            }
+
+            // 6. Schedule Clash Warning Banner
+            if (state.dayClashWarnings.isNotEmpty()) {
+                item {
+                    ClashWarningBanner(warnings = state.dayClashWarnings)
+                }
+            }
+
+            // 7. Day Header
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "${MatchTimeFormatter.formatDateTitle(state.selectedDate)} · ${state.selectedDayMatches.size} 场",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = InkPrimary,
+                    )
+                    if (state.prefs.watchNightGrouping) {
+                        Text(
+                            text = "含次日凌晨场",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = InkTertiary,
                         )
                     }
-                } else {
-                    items(state.selectedDayMatches, key = { it.id }) { match ->
-                        MatchCard(
-                            match = match,
-                            favoriteTeams = state.prefs.favoriteTeams,
-                            onClick = { onOpenMatchDetail(match) },
-                            onToggleFavoriteTeam = onToggleFavoriteTeam,
-                        )
-                    }
+                }
+            }
+
+            // 8. Selected Day Matches
+            if (state.selectedDayMatches.isEmpty()) {
+                item {
+                    EmptyDayWhiteCard(
+                        onRefresh = onRefresh,
+                        upcomingMatches = state.filteredMatches
+                            .filter { !it.status.isCancelledOrPostponed }
+                            .take(3),
+                        onJumpMatchDate = { m ->
+                            MatchTimeFormatter.displayDateFor(
+                                utcIso = m.utcDate,
+                                watchNightGrouping = state.prefs.watchNightGrouping,
+                            )?.let(onSelectDate)
+                        },
+                    )
+                }
+            } else {
+                items(state.selectedDayMatches, key = { it.id }) { match ->
+                    AppleMatchCard(
+                        match = match,
+                        isFavoriteTeamMatch = match.involvesAnyTeam(state.prefs.favoriteTeams),
+                        isWatchlisted = match.id in state.prefs.watchlistMatchIds,
+                        homeRank = state.teamRankByName[match.homeTeamZhName]?.rank,
+                        awayRank = state.teamRankByName[match.awayTeamZhName]?.rank,
+                        onClick = { onOpenMatchDetail(match) },
+                        onToggleWatchlist = { onToggleWatchlist(match.id) },
+                    )
                 }
             }
         }
@@ -238,19 +332,21 @@ fun CalendarScreen(
 
     val detail = state.selectedMatchDetail
     if (detail != null) {
-        ModalBottomSheet(onDismissRequest = onCloseMatchDetail) {
-            MatchDetailSheet(
+        ModalBottomSheet(
+            onDismissRequest = onCloseMatchDetail,
+            containerColor = Color.White,
+        ) {
+            MatchDetailBottomSheet(
                 match = detail,
                 favoriteTeams = state.prefs.favoriteTeams,
+                isWatchlisted = detail.id in state.prefs.watchlistMatchIds,
+                homeStanding = state.teamRankByName[detail.homeTeamZhName],
+                awayStanding = state.teamRankByName[detail.awayTeamZhName],
                 onToggleFavorite = onToggleFavoriteTeam,
-                onAddToSystemCalendar = {
-                    context.startActivity(onBuildCalendarIntent(detail))
-                },
+                onToggleWatchlist = { onToggleWatchlist(detail.id) },
+                onAddToSystemCalendar = { context.startActivity(onBuildCalendarIntent(detail)) },
                 onShareIcs = {
-                    onBuildShareIcsIntent(
-                        listOf(detail),
-                        "match_${detail.id}.ics",
-                    )?.let { intent ->
+                    onBuildShareIcsIntent(listOf(detail), "match_${detail.id}.ics")?.let { intent ->
                         context.startActivity(Intent.createChooser(intent, "分享赛程日历 (.ics)"))
                     }
                 },
@@ -260,7 +356,173 @@ fun CalendarScreen(
 }
 
 @Composable
-private fun CalendarGridCard(
+private fun HeroNextMatchCard(
+    match: MatchItem,
+    teamRankByName: Map<String, StandingEntry>,
+    onClick: () -> Unit,
+) {
+    var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(match.id) {
+        while (true) {
+            nowMillis = System.currentTimeMillis()
+            delay(1_000)
+        }
+    }
+
+    val kickoffInstant = MatchTimeFormatter.parseInstant(match.utcDate)
+    val countdownText = remember(match.utcDate, nowMillis) {
+        if (kickoffInstant == null) {
+            "--:--:--"
+        } else {
+            val sec = Duration.between(Instant.ofEpochMilli(nowMillis), kickoffInstant).seconds
+            when {
+                sec in -6900..0 -> "LIVE 进行中"
+                sec < -6900 -> "已结束"
+                sec < 86400 -> {
+                    val h = sec / 3600
+                    val m = (sec % 3600) / 60
+                    val s = sec % 60
+                    "%02d:%02d:%02d".format(h, m, s)
+                }
+                else -> MatchTimeFormatter.formatMonthDayTime(match.utcDate)
+            }
+        }
+    }
+
+    val homeRank = teamRankByName[match.homeTeamZhName]?.rank
+    val awayRank = teamRankByName[match.awayTeamZhName]?.rank
+    val tagText = when {
+        match.isInternational -> "国家队焦点"
+        homeRank != null && awayRank != null -> "第${homeRank}名 vs 第${awayRank}名"
+        else -> "下一场焦点大战"
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .clip(RoundedCornerShape(22.dp))
+            .background(
+                Brush.linearGradient(listOf(AppleRed, AppleRedDeep)),
+            )
+            .clickable(onClick = onClick)
+            .padding(18.dp),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "下一场焦点 · ${match.competitionZhName}",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Color.White.copy(alpha = 0.92f),
+                    fontWeight = FontWeight.Bold,
+                )
+                Surface(
+                    color = Color.White.copy(alpha = 0.2f),
+                    shape = RoundedCornerShape(999.dp),
+                ) {
+                    Text(
+                        text = tagText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    TeamCrest(url = match.homeTeamCrest, teamName = match.homeTeamZhName, size = 44.dp)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = match.homeTeamZhName,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+
+                Column(
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        text = "距开球",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White.copy(alpha = 0.8f),
+                    )
+                    Text(
+                        text = countdownText,
+                        color = Color.White,
+                        style = TextStyle(
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Black,
+                            fontFeatureSettings = "tnum",
+                        ),
+                    )
+                    Text(
+                        text = MatchTimeFormatter.formatMonthDayTime(match.utcDate),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White.copy(alpha = 0.88f),
+                    )
+                }
+
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    TeamCrest(url = match.awayTeamCrest, teamName = match.awayTeamZhName, size = 44.dp)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = match.awayTeamZhName,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LeaguePill(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(999.dp),
+        color = if (selected) AppleRed else Color.White,
+        border = if (selected) null else androidx.compose.foundation.BorderStroke(0.75.dp, AppleDivider),
+    ) {
+        Text(
+            text = label,
+            color = if (selected) Color.White else InkPrimary,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+        )
+    }
+}
+
+@Composable
+private fun AppleCalendarCard(
     currentMonth: YearMonth,
     selectedDate: LocalDate,
     isExpanded: Boolean,
@@ -273,46 +535,60 @@ private fun CalendarGridCard(
     onToggleExpanded: () -> Unit,
 ) {
     val today = LocalDate.now()
-    Card(
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(16.dp),
+            .padding(horizontal = 16.dp),
+        color = Color.White,
+        shape = RoundedCornerShape(22.dp),
+        shadowElevation = 1.dp,
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
+        Column(modifier = Modifier.padding(14.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onPrevMonth, modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Filled.ChevronLeft, contentDescription = "上个月")
+                    IconButton(onClick = onPrevMonth, modifier = Modifier.size(30.dp)) {
+                        Icon(Icons.Filled.ChevronLeft, contentDescription = "上个月", tint = InkPrimary)
                     }
                     Text(
                         text = MatchTimeFormatter.formatYearMonth(currentMonth.atDay(1)),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = InkPrimary,
                     )
-                    IconButton(onClick = onNextMonth, modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Filled.ChevronRight, contentDescription = "下个月")
+                    IconButton(onClick = onNextMonth, modifier = Modifier.size(30.dp)) {
+                        Icon(Icons.Filled.ChevronRight, contentDescription = "下个月", tint = InkPrimary)
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = onJumpToday) {
-                        Text("今天")
+                    Surface(
+                        onClick = onJumpToday,
+                        color = AppleRedTint,
+                        shape = RoundedCornerShape(999.dp),
+                    ) {
+                        Text(
+                            text = "今天",
+                            color = AppleRed,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                        )
                     }
-                    IconButton(onClick = onToggleExpanded, modifier = Modifier.size(32.dp)) {
+                    IconButton(onClick = onToggleExpanded, modifier = Modifier.size(30.dp)) {
                         Icon(
                             imageVector = if (isExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                             contentDescription = "展开/收起月历",
+                            tint = InkSecondary,
                         )
                     }
                 }
             }
 
-            // Weekday header (Mon..Sun)
+            Spacer(modifier = Modifier.height(6.dp))
+
             val weekLabels = listOf("一", "二", "三", "四", "五", "六", "日")
             Row(modifier = Modifier.fillMaxWidth()) {
                 weekLabels.forEach { label ->
@@ -321,19 +597,15 @@ private fun CalendarGridCard(
                         modifier = Modifier.weight(1f),
                         textAlign = TextAlign.Center,
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = InkTertiary,
+                        fontWeight = FontWeight.SemiBold,
                     )
                 }
             }
 
             Spacer(modifier = Modifier.height(6.dp))
 
-            val datesToShow = if (isExpanded) {
-                buildMonthDates(currentMonth)
-            } else {
-                buildWeekDates(selectedDate)
-            }
-
+            val datesToShow = if (isExpanded) buildMonthDates(currentMonth) else buildWeekDates(selectedDate)
             datesToShow.chunked(7).forEach { week ->
                 Row(
                     modifier = Modifier
@@ -350,21 +622,12 @@ private fun CalendarGridCard(
                         Box(
                             modifier = Modifier
                                 .weight(1f)
-                                .height(40.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(
-                                    when {
-                                        isSelected -> MaterialTheme.colorScheme.primary
-                                        else -> Color.Transparent
-                                    },
-                                )
+                                .height(38.dp)
+                                .clip(CircleShape)
+                                .background(if (isSelected) AppleRed else Color.Transparent)
                                 .then(
                                     if (isToday && !isSelected) {
-                                        Modifier.border(
-                                            1.dp,
-                                            MaterialTheme.colorScheme.primary,
-                                            RoundedCornerShape(10.dp),
-                                        )
+                                        Modifier.border(1.2.dp, AppleRed, CircleShape)
                                     } else {
                                         Modifier
                                     },
@@ -375,25 +638,29 @@ private fun CalendarGridCard(
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(
                                     text = date.dayOfMonth.toString(),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = if (isSelected || isToday) FontWeight.Bold else FontWeight.Normal,
+                                    style = TextStyle(
+                                        fontSize = 13.sp,
+                                        fontWeight = if (isSelected || isToday) FontWeight.Bold else FontWeight.Medium,
+                                        fontFeatureSettings = "tnum",
+                                    ),
                                     color = when {
-                                        isSelected -> MaterialTheme.colorScheme.onPrimary
-                                        !inCurrentMonth && isExpanded -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                                        else -> MaterialTheme.colorScheme.onSurface
+                                        isSelected -> Color.White
+                                        isToday -> AppleRed
+                                        !inCurrentMonth && isExpanded -> InkTertiary.copy(alpha = 0.45f)
+                                        else -> InkPrimary
                                     },
                                 )
                                 if (dayMatches.isNotEmpty()) {
                                     Spacer(modifier = Modifier.height(2.dp))
                                     Box(
                                         modifier = Modifier
-                                            .size(5.dp)
+                                            .size(4.5.dp)
                                             .clip(CircleShape)
                                             .background(
                                                 when {
-                                                    isSelected -> MaterialTheme.colorScheme.onPrimary
-                                                    hasFavorite -> AmberHighlight
-                                                    else -> MaterialTheme.colorScheme.primary
+                                                    isSelected -> Color.White
+                                                    hasFavorite -> AppleRed
+                                                    else -> InkTertiary
                                                 },
                                             ),
                                     )
@@ -408,102 +675,111 @@ private fun CalendarGridCard(
 }
 
 @Composable
-private fun ChangesBanner(
+private fun ChangesAlertCard(
     changes: List<ScheduleChange>,
     onDismiss: () -> Unit,
 ) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        color = MaterialTheme.colorScheme.primaryContainer,
-        shape = RoundedCornerShape(12.dp),
+            .padding(horizontal = 16.dp),
+        color = AppleRedTint,
+        border = androidx.compose.foundation.BorderStroke(1.dp, AppleRedBorder),
+        shape = RoundedCornerShape(16.dp),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "检测到 ${changes.size} 项赛程变化",
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    color = AppleRedDeep,
                 )
                 Text(
                     text = changes.first().summary,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    color = InkPrimary,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
             TextButton(onClick = onDismiss) {
-                Text("知道了")
+                Text("知道了", color = AppleRed)
             }
         }
     }
 }
 
 @Composable
-private fun DaySectionHeader(
-    date: LocalDate,
-    matchCount: Int,
-    watchNightGrouping: Boolean,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
+private fun ClashWarningBanner(warnings: List<String>) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        color = AmberTint,
+        shape = RoundedCornerShape(14.dp),
     ) {
-        Text(
-            text = "${MatchTimeFormatter.formatDateTitle(date)} · $matchCount 场",
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.Bold,
-        )
-        if (watchNightGrouping) {
-            Text(
-                text = "含次日凌晨场",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Warning,
+                contentDescription = null,
+                tint = AmberWarm,
+                modifier = Modifier.size(18.dp),
             )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "开球时间撞车提醒",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF78350F),
+                )
+                Text(
+                    text = warnings.first(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF92400E),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun MatchCard(
+private fun AppleMatchCard(
     match: MatchItem,
-    favoriteTeams: Set<String>,
+    isFavoriteTeamMatch: Boolean,
+    isWatchlisted: Boolean,
+    homeRank: Int?,
+    awayRank: Int?,
     onClick: () -> Unit,
-    onToggleFavoriteTeam: (String) -> Unit,
+    onToggleWatchlist: () -> Unit,
 ) {
-    val leagueColor = CompetitionCatalog.findByCode(match.competitionCode)
-        ?.let { Color(it.colorArgb) } ?: MaterialTheme.colorScheme.primary
     val kickoff = MatchTimeFormatter.formatKickoffTime(match.utcDate)
     val isEarly = MatchTimeFormatter.isEarlyMorning(match.utcDate)
-    val isFavMatch = match.involvesAnyTeam(favoriteTeams)
 
-    Card(
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .then(
-                if (isFavMatch) {
-                    Modifier.border(
-                        1.dp,
-                        AmberHighlight.copy(alpha = 0.55f),
-                        RoundedCornerShape(16.dp),
-                    )
-                } else {
-                    Modifier
-                },
-            ),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(16.dp),
+            .padding(horizontal = 16.dp)
+            .clip(RoundedCornerShape(20.dp))
+            .clickable(onClick = onClick),
+        color = Color.White,
+        shape = RoundedCornerShape(20.dp),
+        border = if (isFavoriteTeamMatch || isWatchlisted) {
+            androidx.compose.foundation.BorderStroke(1.dp, AppleRedBorder)
+        } else {
+            androidx.compose.foundation.BorderStroke(0.5.dp, AppleDivider)
+        },
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -513,107 +789,126 @@ private fun MatchCard(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Surface(
-                        color = leagueColor.copy(alpha = 0.16f),
-                        shape = RoundedCornerShape(8.dp),
-                    ) {
-                        Text(
-                            text = match.competitionZhName,
-                            color = leagueColor,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                        )
-                    }
                     Text(
-                        text = kickoff,
-                        style = MaterialTheme.typography.labelLarge,
+                        text = match.competitionZhName,
+                        color = AppleRed,
+                        style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                     )
+                    if (homeRank != null && awayRank != null) {
+                        Text(
+                            text = "· 第${homeRank} vs 第${awayRank}",
+                            color = InkSecondary,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
                     if (isEarly) {
-                        Surface(
-                            color = AmberHighlight.copy(alpha = 0.18f),
-                            shape = RoundedCornerShape(6.dp),
-                        ) {
+                        Surface(color = AmberTint, shape = RoundedCornerShape(6.dp)) {
                             Text(
                                 text = "次日凌晨",
-                                color = AmberHighlight,
+                                color = AmberWarm,
                                 style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                             )
                         }
                     }
                 }
 
-                Surface(
-                    color = when {
-                        match.status.isCancelledOrPostponed -> MaterialTheme.colorScheme.error.copy(alpha = 0.15f)
-                        match.status.isLive -> MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-                        else -> MaterialTheme.colorScheme.surfaceVariant
-                    },
-                    shape = RoundedCornerShape(8.dp),
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text(
-                        text = match.status.zhLabel,
-                        style = MaterialTheme.typography.labelSmall,
+                    Surface(
                         color = when {
-                            match.status.isCancelledOrPostponed -> MaterialTheme.colorScheme.error
-                            match.status.isLive -> MaterialTheme.colorScheme.primary
-                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            match.status.isLive -> AppleLiveRed
+                            match.status.isCancelledOrPostponed -> AppleRedTint
+                            else -> AppleCanvas
                         },
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        shape = RoundedCornerShape(999.dp),
+                    ) {
+                        Text(
+                            text = if (match.status.isLive) "● LIVE" else match.status.zhLabel,
+                            color = when {
+                                match.status.isLive -> Color.White
+                                match.status.isCancelledOrPostponed -> AppleRed
+                                else -> InkSecondary
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        )
+                    }
+
+                    Icon(
+                        imageVector = if (isWatchlisted) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                        contentDescription = "标记必看",
+                        tint = if (isWatchlisted) AppleRed else InkTertiary,
+                        modifier = Modifier
+                            .size(20.dp)
+                            .clickable(onClick = onToggleWatchlist),
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                val homeFav = match.homeTeamZhName in favoriteTeams || match.homeTeamName in favoriteTeams
-                val awayFav = match.awayTeamZhName in favoriteTeams || match.awayTeamName in favoriteTeams
-
                 Row(
                     modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Icon(
-                        imageVector = if (homeFav) Icons.Filled.Star else Icons.Outlined.StarBorder,
-                        contentDescription = "收藏主队",
-                        tint = if (homeFav) AmberHighlight else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .size(18.dp)
-                            .clickable { onToggleFavoriteTeam(match.homeTeamZhName) },
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
+                    TeamCrest(url = match.homeTeamCrest, teamName = match.homeTeamZhName, size = 32.dp)
                     Text(
                         text = match.homeTeamZhName,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = InkPrimary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
 
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    shape = RoundedCornerShape(10.dp),
+                Column(
                     modifier = Modifier.padding(horizontal = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    val centerText = if (match.homeScore != null && match.awayScore != null) {
-                        "${match.homeScore} : ${match.awayScore}"
+                    if (match.homeScore != null && match.awayScore != null) {
+                        Surface(
+                            color = if (match.status.isLive) AppleRedTint else AppleCanvas,
+                            shape = RoundedCornerShape(10.dp),
+                        ) {
+                            Text(
+                                text = "${match.homeScore} : ${match.awayScore}",
+                                style = TextStyle(
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Black,
+                                    fontFeatureSettings = "tnum",
+                                ),
+                                color = if (match.status.isLive) AppleRed else InkPrimary,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                            )
+                        }
                     } else {
-                        "VS"
+                        Text(
+                            text = kickoff,
+                            style = TextStyle(
+                                fontSize = 19.sp,
+                                fontWeight = FontWeight.Black,
+                                fontFeatureSettings = "tnum",
+                            ),
+                            color = InkPrimary,
+                        )
+                        Text(
+                            text = "本地开球",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = InkTertiary,
+                        )
                     }
-                    Text(
-                        text = centerText,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                    )
                 }
 
                 Row(
@@ -623,30 +918,41 @@ private fun MatchCard(
                 ) {
                     Text(
                         text = match.awayTeamZhName,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = InkPrimary,
                         textAlign = TextAlign.End,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Icon(
-                        imageVector = if (awayFav) Icons.Filled.Star else Icons.Outlined.StarBorder,
-                        contentDescription = "收藏客队",
-                        tint = if (awayFav) AmberHighlight else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .size(18.dp)
-                            .clickable { onToggleFavoriteTeam(match.awayTeamZhName) },
-                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    TeamCrest(url = match.awayTeamCrest, teamName = match.awayTeamZhName, size = 32.dp)
                 }
             }
 
-            if (match.venue.isNotBlank()) {
-                Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(10.dp))
+            HorizontalDivider(color = AppleCanvas)
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Text(
-                    text = "${match.venue} · ${MatchTimeFormatter.formatRelativeCountdown(match.utcDate)}",
+                    text = match.venue.ifBlank { match.competitionName },
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = InkTertiary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = "${MatchTimeFormatter.formatRelativeCountdown(match.utcDate)} ›",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = AppleRed,
+                    fontWeight = FontWeight.SemiBold,
                 )
             }
         }
@@ -654,80 +960,177 @@ private fun MatchCard(
 }
 
 @Composable
-private fun EmptyDayCard(
+private fun EmptyDayWhiteCard(
     onRefresh: () -> Unit,
     upcomingMatches: List<MatchItem>,
-    onSelectDate: (MatchItem) -> Unit,
+    onJumpMatchDate: (MatchItem) -> Unit,
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(16.dp),
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        color = Color.White,
+        shape = RoundedCornerShape(20.dp),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(18.dp),
+                .padding(20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                text = "当天暂无符合筛选条件的比赛",
+                text = "当天暂无符合筛选条件的赛程",
                 style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
+                fontWeight = FontWeight.Bold,
+                color = InkPrimary,
             )
-            Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = "可下拉刷新获取最新赛程，或点选下方近期焦点场次跳转：",
+                text = "下拉可立即更新赛程，或点击跳转到近期焦点比赛日：",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = InkSecondary,
                 textAlign = TextAlign.Center,
             )
-            Spacer(modifier = Modifier.height(10.dp))
             upcomingMatches.forEach { m ->
-                AssistChip(
-                    onClick = { onSelectDate(m) },
-                    label = {
-                        Text("${MatchTimeFormatter.formatMonthDayTime(m.utcDate)} · ${m.homeTeamZhName} vs ${m.awayTeamZhName}")
-                    },
-                )
+                Surface(
+                    onClick = { onJumpMatchDate(m) },
+                    color = AppleRedTint,
+                    shape = RoundedCornerShape(999.dp),
+                ) {
+                    Text(
+                        text = "${MatchTimeFormatter.formatMonthDayTime(m.utcDate)} · ${m.homeTeamZhName} vs ${m.awayTeamZhName}",
+                        color = AppleRed,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                }
             }
-            Spacer(modifier = Modifier.height(6.dp))
             OutlinedButton(onClick = onRefresh) {
-                Text("立即刷新赛程")
+                Text("立即同步最新赛程")
             }
         }
     }
 }
 
 @Composable
-private fun MatchDetailSheet(
+private fun MatchDetailBottomSheet(
     match: MatchItem,
     favoriteTeams: Set<String>,
+    isWatchlisted: Boolean,
+    homeStanding: StandingEntry?,
+    awayStanding: StandingEntry?,
     onToggleFavorite: (String) -> Unit,
+    onToggleWatchlist: () -> Unit,
     onAddToSystemCalendar: () -> Unit,
     onShareIcs: () -> Unit,
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+            .padding(horizontal = 20.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Surface(color = AppleRedTint, shape = RoundedCornerShape(999.dp)) {
+                Text(
+                    text = "${match.competitionZhName} · ${match.status.zhLabel}",
+                    color = AppleRed,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                )
+            }
+            FilterChip(
+                selected = isWatchlisted,
+                onClick = onToggleWatchlist,
+                label = { Text(if (isWatchlisted) "已加必看" else "加入必看") },
+                leadingIcon = {
+                    Icon(
+                        if (isWatchlisted) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                    )
+                },
+            )
+        }
+
+        Surface(
+            color = AppleCanvas,
+            shape = RoundedCornerShape(18.dp),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    TeamCrest(url = match.homeTeamCrest, teamName = match.homeTeamZhName, size = 54.dp)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(match.homeTeamZhName, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                    if (homeStanding != null) {
+                        Text(
+                            "第 ${homeStanding.rank} 名 · ${homeStanding.points}分",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = InkSecondary,
+                        )
+                    }
+                }
+
+                Column(
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        text = if (match.homeScore != null && match.awayScore != null) {
+                            "${match.homeScore} : ${match.awayScore}"
+                        } else {
+                            MatchTimeFormatter.formatKickoffTime(match.utcDate)
+                        },
+                        style = TextStyle(
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Black,
+                            fontFeatureSettings = "tnum",
+                        ),
+                        color = InkPrimary,
+                    )
+                    Text(
+                        text = MatchTimeFormatter.formatMonthDayTime(match.utcDate),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = InkSecondary,
+                    )
+                }
+
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    TeamCrest(url = match.awayTeamCrest, teamName = match.awayTeamZhName, size = 54.dp)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(match.awayTeamZhName, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                    if (awayStanding != null) {
+                        Text(
+                            "第 ${awayStanding.rank} 名 · ${awayStanding.points}分",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = InkSecondary,
+                        )
+                    }
+                }
+            }
+        }
+
         Text(
-            text = "${match.competitionZhName} · ${match.status.zhLabel}",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.Bold,
-        )
-        Text(
-            text = "${match.homeTeamZhName} vs ${match.awayTeamZhName}",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
-        )
-        Text(
-            text = "开球时间（本地）：${MatchTimeFormatter.formatMonthDayTime(match.utcDate)}\n球场：${match.venue.ifBlank { "待定" }}",
+            text = "比赛场地：${match.venue.ifBlank { "待公布" }}",
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = InkSecondary,
         )
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -759,30 +1162,28 @@ private fun MatchDetailSheet(
             )
         }
 
-        HorizontalDivider()
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 onClick = onAddToSystemCalendar,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = AppleRed),
             ) {
                 Icon(Icons.Filled.EventAvailable, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("加入系统日历")
+                Text("添加到手机系统日历", fontWeight = FontWeight.Bold)
             }
             OutlinedButton(
                 onClick = onShareIcs,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
             ) {
                 Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("导出 .ics")
+                Text("导出标准 .ics 文件分享")
             }
         }
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(18.dp))
     }
 }
 

@@ -4,6 +4,7 @@ import androidx.room.Entity
 import androidx.room.PrimaryKey
 import com.footballcalendar.app.model.MatchItem
 import com.footballcalendar.app.model.MatchStatus
+import com.footballcalendar.app.util.TeamAssetCatalog
 
 @Entity(tableName = "matches")
 data class MatchEntity(
@@ -27,6 +28,8 @@ data class MatchEntity(
     val awayScore: Int?,
     val venue: String,
     val lastUpdatedUtc: String,
+    val homeTeamCrest: String = "",
+    val awayTeamCrest: String = "",
 ) {
     fun toDomain(): MatchItem = MatchItem(
         id = id,
@@ -49,6 +52,8 @@ data class MatchEntity(
         awayScore = awayScore,
         venue = venue,
         lastUpdatedUtc = lastUpdatedUtc,
+        homeTeamCrest = homeTeamCrest.ifBlank { TeamAssetCatalog.resolveTeamLogo(homeTeamName) },
+        awayTeamCrest = awayTeamCrest.ifBlank { TeamAssetCatalog.resolveTeamLogo(awayTeamName) },
     )
 
     companion object {
@@ -73,6 +78,8 @@ data class MatchEntity(
             awayScore = item.awayScore,
             venue = item.venue,
             lastUpdatedUtc = item.lastUpdatedUtc,
+            homeTeamCrest = item.homeTeamCrest,
+            awayTeamCrest = item.awayTeamCrest,
         )
     }
 }

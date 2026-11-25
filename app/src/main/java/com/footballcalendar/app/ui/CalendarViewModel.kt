@@ -11,10 +11,13 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.footballcalendar.app.FootballCalendarApplication
 import com.footballcalendar.app.data.preferences.UserPreferences
+import com.footballcalendar.app.model.CompetitionCatalog
 import com.footballcalendar.app.model.DataSourceMode
 import com.footballcalendar.app.model.MatchItem
 import com.footballcalendar.app.model.ScheduleChange
 import com.footballcalendar.app.model.ScheduleChangeType
+import com.footballcalendar.app.model.StandingEntry
+import com.footballcalendar.app.model.StarPlayer
 import com.footballcalendar.app.util.IcsExporter
 import com.footballcalendar.app.util.MatchTimeFormatter
 import com.footballcalendar.app.widget.NextMatchWidgetProvider
@@ -28,6 +31,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.time.Duration
+import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
@@ -36,12 +41,20 @@ data class CalendarUiState(
     val currentMonth: YearMonth = YearMonth.now(),
     val selectedDate: LocalDate = LocalDate.now(),
     val isMonthExpanded: Boolean = true,
-    val onlyFavorites: Boolean = false,
-    val selectedLeagueFilter: String? = null,
+    val calendarFilterTab: Int = 0, // 0=全部关注, 1=只看主队, 2=必看清单
+    val selectedLeagueFilter: String? = null, // null=全部, "NAT"=国家队合集, or code
     val allMatches: List<MatchItem> = emptyList(),
     val filteredMatches: List<MatchItem> = emptyList(),
     val matchesByDate: Map<LocalDate, List<MatchItem>> = emptyMap(),
     val selectedDayMatches: List<MatchItem> = emptyList(),
+    val heroMatch: MatchItem? = null,
+    val dayClashWarnings: List<String> = emptyList(),
+    val standingsByLeague: Map<String, List<StandingEntry>> = emptyMap(),
+    val teamRankByName: Map<String, StandingEntry> = emptyMap(),
+    val selectedStandingsLeague: String = "PL",
+    val starPlayers: List<StarPlayer> = emptyList(),
+    val selectedStarPlayer: StarPlayer? = null,
+    val isSearchingPlayer: Boolean = false,
     val prefs: UserPreferences = UserPreferences(),
     val isSyncing: Boolean = false,
     val recentChanges: List<ScheduleChange> = emptyList(),
@@ -49,12 +62,15 @@ data class CalendarUiState(
     val selectedMatchDetail: MatchItem? = null,
 )
 
-private data class CalendarViewFilterState(
+private data class UiInteractionState(
     val currentMonth: YearMonth = YearMonth.now(),
     val selectedDate: LocalDate = LocalDate.now(),
     val isMonthExpanded: Boolean = true,
-    val onlyFavorites: Boolean = false,
+    val calendarFilterTab: Int = 0,
     val selectedLeagueFilter: String? = null,
+    val selectedStandingsLeague: String = "PL",
+    val selectedStarPlayer: StarPlayer? = null,
+    val isSearchingPlayer: Boolean = false,
     val isSyncing: Boolean = false,
     val recentChanges: List<ScheduleChange> = emptyList(),
     val bannerMessage: String? = null,
@@ -69,19 +85,29 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
     private val calendarManager = container.systemCalendarSyncManager
     private val notificationHelper = container.notificationHelper
 
-    private val filterState = MutableStateFlow(CalendarViewFilterState())
+    private val uiInteraction = MutableStateFlow(UiInteractionState())
 
     val uiState: StateFlow<CalendarUiState> = combine(
         fixtureRepo.observeAllMatches(),
+        fixtureRepo.observeAllStandings(),
+        fixtureRepo.starPlayersFlow,
         prefsRepo.preferencesFlow,
-        filterState,
-    ) { allMatches, prefs, ui ->
+        uiInteraction,
+    ) { allMatches, allStandings, players, prefs, ui ->
         val zoneId = ZoneId.systemDefault()
         val filtered = allMatches.filter { match ->
             val leagueAllowed = match.competitionCode in prefs.followedCompetitions
-            val chipAllowed = ui.selectedLeagueFilter == null || match.competitionCode == ui.selectedLeagueFilter
-            val favAllowed = !ui.onlyFavorites || match.involvesAnyTeam(prefs.favoriteTeams)
-            leagueAllowed && chipAllowed && favAllowed
+            val chipAllowed = when (ui.selectedLeagueFilter) {
+                null -> true
+                "NAT" -> match.isInternational
+                else -> match.competitionCode == ui.selectedLeagueFilter
+            }
+            val tabAllowed = when (ui.calendarFilterTab) {
+                1 -> match.involvesAnyTeam(prefs.favoriteTeams)
+                2 -> match.id in prefs.watchlistMatchIds
+                else -> true
+            }
+            leagueAllowed && chipAllowed && tabAllowed
         }
 
         val grouped = filtered.groupBy { match ->
@@ -93,17 +119,45 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
         }
 
         val dayMatches = grouped[ui.selectedDate].orEmpty().sortedBy { it.utcDate }
+        val clashWarnings = detectScheduleClashes(dayMatches, zoneId)
+
+        val now = Instant.now().minusSeconds(1800)
+        val upcomingFollowed = allMatches.filter { match ->
+            !match.status.isCancelledOrPostponed &&
+                match.competitionCode in prefs.followedCompetitions &&
+                (MatchTimeFormatter.parseInstant(match.utcDate)?.isAfter(now) == true)
+        }.sortedBy { it.utcDate }
+
+        val hero = upcomingFollowed.firstOrNull { it.id in prefs.watchlistMatchIds }
+            ?: upcomingFollowed.firstOrNull { it.involvesAnyTeam(prefs.favoriteTeams) }
+            ?: upcomingFollowed.firstOrNull()
+
+        val standingsGrouped = allStandings.groupBy { it.competitionCode }
+        val rankMap = buildMap<String, StandingEntry> {
+            allStandings.forEach { entry ->
+                putIfAbsent(entry.teamName, entry)
+                putIfAbsent(entry.teamZhName, entry)
+            }
+        }
 
         CalendarUiState(
             currentMonth = ui.currentMonth,
             selectedDate = ui.selectedDate,
             isMonthExpanded = ui.isMonthExpanded,
-            onlyFavorites = ui.onlyFavorites,
+            calendarFilterTab = ui.calendarFilterTab,
             selectedLeagueFilter = ui.selectedLeagueFilter,
             allMatches = allMatches,
             filteredMatches = filtered,
             matchesByDate = grouped,
             selectedDayMatches = dayMatches,
+            heroMatch = hero,
+            dayClashWarnings = clashWarnings,
+            standingsByLeague = standingsGrouped,
+            teamRankByName = rankMap,
+            selectedStandingsLeague = ui.selectedStandingsLeague,
+            starPlayers = players,
+            selectedStarPlayer = ui.selectedStarPlayer,
+            isSearchingPlayer = ui.isSearchingPlayer,
             prefs = prefs,
             isSyncing = ui.isSyncing,
             recentChanges = ui.recentChanges,
@@ -116,68 +170,124 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
         initialValue = CalendarUiState(),
     )
 
+    private fun detectScheduleClashes(dayMatches: List<MatchItem>, zoneId: ZoneId): List<String> {
+        if (dayMatches.size < 2) return emptyList()
+        val warnings = mutableListOf<String>()
+        for (i in 0 until dayMatches.size - 1) {
+            val a = dayMatches[i]
+            val b = dayMatches[i + 1]
+            val ta = MatchTimeFormatter.parseInstant(a.utcDate) ?: continue
+            val tb = MatchTimeFormatter.parseInstant(b.utcDate) ?: continue
+            val gapMins = Duration.between(ta, tb).abs().toMinutes()
+            if (gapMins <= 75) {
+                val timeStr = MatchTimeFormatter.formatKickoffTime(a.utcDate, zoneId)
+                warnings += "$timeStr 附近「${a.homeTeamZhName} vs ${a.awayTeamZhName}」与「${b.homeTeamZhName} vs ${b.awayTeamZhName}」时间重叠"
+            }
+        }
+        return warnings
+    }
+
     fun selectDate(date: LocalDate) {
-        filterState.update {
-            it.copy(
-                selectedDate = date,
-                currentMonth = YearMonth.from(date),
-            )
+        uiInteraction.update {
+            it.copy(selectedDate = date, currentMonth = YearMonth.from(date))
         }
     }
 
     fun previousMonth() {
-        filterState.update { it.copy(currentMonth = it.currentMonth.minusMonths(1)) }
+        uiInteraction.update { it.copy(currentMonth = it.currentMonth.minusMonths(1)) }
     }
 
     fun nextMonth() {
-        filterState.update { it.copy(currentMonth = it.currentMonth.plusMonths(1)) }
+        uiInteraction.update { it.copy(currentMonth = it.currentMonth.plusMonths(1)) }
     }
 
     fun jumpToToday() {
         val today = LocalDate.now()
-        filterState.update {
-            it.copy(
-                selectedDate = today,
-                currentMonth = YearMonth.from(today),
-            )
-        }
+        uiInteraction.update { it.copy(selectedDate = today, currentMonth = YearMonth.from(today)) }
     }
 
     fun toggleMonthExpanded() {
-        filterState.update { it.copy(isMonthExpanded = !it.isMonthExpanded) }
+        uiInteraction.update { it.copy(isMonthExpanded = !it.isMonthExpanded) }
     }
 
-    fun toggleOnlyFavorites() {
-        filterState.update { it.copy(onlyFavorites = !it.onlyFavorites) }
+    fun setCalendarFilterTab(tab: Int) {
+        uiInteraction.update { it.copy(calendarFilterTab = tab) }
     }
 
     fun selectLeagueFilter(code: String?) {
-        filterState.update {
+        uiInteraction.update {
             val next = if (it.selectedLeagueFilter == code) null else code
             it.copy(selectedLeagueFilter = next)
         }
     }
 
+    fun selectStandingsLeague(code: String) {
+        uiInteraction.update { it.copy(selectedStandingsLeague = code) }
+    }
+
     fun openMatchDetail(match: MatchItem) {
-        filterState.update { it.copy(selectedMatchDetail = match) }
+        uiInteraction.update { it.copy(selectedMatchDetail = match) }
     }
 
     fun closeMatchDetail() {
-        filterState.update { it.copy(selectedMatchDetail = null) }
+        uiInteraction.update { it.copy(selectedMatchDetail = null) }
+    }
+
+    fun openPlayerDetail(player: StarPlayer) {
+        uiInteraction.update { it.copy(selectedStarPlayer = player) }
+    }
+
+    fun closePlayerDetail() {
+        uiInteraction.update { it.copy(selectedStarPlayer = null) }
     }
 
     fun clearBanner() {
-        filterState.update { it.copy(bannerMessage = null) }
+        uiInteraction.update { it.copy(bannerMessage = null) }
     }
 
     fun dismissChangesBanner() {
-        filterState.update { it.copy(recentChanges = emptyList()) }
+        uiInteraction.update { it.copy(recentChanges = emptyList()) }
+    }
+
+    fun toggleWatchlistMatch(matchId: String) {
+        viewModelScope.launch {
+            prefsRepo.toggleWatchlistMatch(matchId)
+        }
+    }
+
+    fun toggleFavoritePlayer(playerId: String) {
+        viewModelScope.launch {
+            prefsRepo.toggleFavoritePlayer(playerId)
+        }
+    }
+
+    fun searchExternalPlayer(query: String) {
+        if (query.isBlank() || uiInteraction.value.isSearchingPlayer) return
+        viewModelScope.launch {
+            uiInteraction.update { it.copy(isSearchingPlayer = true) }
+            val result = withContext(Dispatchers.IO) {
+                fixtureRepo.searchExternalPlayer(query)
+            }
+            result.onSuccess { player ->
+                uiInteraction.update {
+                    if (player != null) {
+                        it.copy(isSearchingPlayer = false, selectedStarPlayer = player)
+                    } else {
+                        it.copy(isSearchingPlayer = false, bannerMessage = "未找到「$query」的公开资料，可尝试输入英文全名")
+                    }
+                }
+            }.onFailure {
+                uiInteraction.update {
+                    it.copy(isSearchingPlayer = false, bannerMessage = "检索球星失败，请检查网络连接或使用英文名")
+                }
+            }
+        }
     }
 
     fun syncNow(simulateDemoChange: Boolean = false) {
-        if (filterState.value.isSyncing) return
+        if (uiInteraction.value.isSyncing) return
         viewModelScope.launch {
-            filterState.update { it.copy(isSyncing = true) }
+            uiInteraction.update { it.copy(isSyncing = true) }
             if (simulateDemoChange) {
                 prefsRepo.bumpDemoMutationStep()
             }
@@ -196,12 +306,11 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
                 }
                 if (prefs.autoSyncSystemCalendar) {
                     withContext(Dispatchers.IO) {
-                        val toSync = uiState.value.filteredMatches
-                        calendarManager.syncMatchesToDeviceCalendar(toSync)
+                        calendarManager.syncMatchesToDeviceCalendar(uiState.value.filteredMatches)
                     }
                 }
                 NextMatchWidgetProvider.updateAllWidgets(getApplication())
-                filterState.update {
+                uiInteraction.update {
                     it.copy(
                         isSyncing = false,
                         recentChanges = summary.changes,
@@ -209,7 +318,7 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
                     )
                 }
             }.onFailure { err ->
-                filterState.update {
+                uiInteraction.update {
                     it.copy(
                         isSyncing = false,
                         bannerMessage = "同步失败：${err.message ?: "请检查网络或订阅地址"}",
@@ -244,7 +353,7 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             prefsRepo.updateSyncSettings(enabled, intervalHours, wifiOnly)
             syncScheduler.configurePeriodicSync(enabled, intervalHours, wifiOnly)
-            filterState.update {
+            uiInteraction.update {
                 it.copy(
                     bannerMessage = if (enabled) {
                         "已开启后台自动同步（每 ${intervalHours} 小时）"
@@ -278,13 +387,13 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
     fun syncMatchesToSystemCalendarNow() {
         viewModelScope.launch {
             if (!calendarManager.hasCalendarPermissions()) {
-                filterState.update { it.copy(bannerMessage = "请先授予手机日历读写权限") }
+                uiInteraction.update { it.copy(bannerMessage = "请先授予手机日历读写权限") }
                 return@launch
             }
             val count = withContext(Dispatchers.IO) {
                 calendarManager.syncMatchesToDeviceCalendar(uiState.value.filteredMatches)
             }
-            filterState.update {
+            uiInteraction.update {
                 it.copy(bannerMessage = "已同步 $count 场关注赛事到手机系统日历")
             }
         }
@@ -313,7 +422,7 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun showBanner(message: String) {
-        filterState.update { it.copy(bannerMessage = message) }
+        uiInteraction.update { it.copy(bannerMessage = message) }
     }
 
     companion object {

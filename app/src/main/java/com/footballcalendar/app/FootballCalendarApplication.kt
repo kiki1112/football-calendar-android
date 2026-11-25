@@ -1,6 +1,8 @@
 package com.footballcalendar.app
 
 import android.app.Application
+import coil.ImageLoader
+import coil.decode.SvgDecoder
 import com.footballcalendar.app.calendar.SystemCalendarSyncManager
 import com.footballcalendar.app.data.local.AppDatabase
 import com.footballcalendar.app.data.preferences.UserPreferencesRepository
@@ -39,11 +41,25 @@ class AppContainer(application: Application) {
     private val okHttpClient: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
+        .addInterceptor { chain ->
+            val req = chain.request().newBuilder()
+                .header("User-Agent", "FootballCalendarApp/2.0 (https://github.com/kiki1112/football-calendar-android)")
+                .build()
+            chain.proceed(req)
+        }
         .addInterceptor(
             HttpLoggingInterceptor().apply {
                 level = HttpLoggingInterceptor.Level.BASIC
             },
         )
+        .build()
+
+    val imageLoader: ImageLoader = ImageLoader.Builder(application)
+        .okHttpClient(okHttpClient)
+        .components {
+            add(SvgDecoder.Factory())
+        }
+        .crossfade(true)
         .build()
 
     private val retrofit: Retrofit = Retrofit.Builder()
@@ -62,8 +78,10 @@ class AppContainer(application: Application) {
 
     val fixtureRepository = FixtureRepository(
         matchDao = database.matchDao(),
+        standingDao = database.standingDao(),
         prefsRepo = prefsRepository,
         dataSource = fixtureDataSource,
+        apiService = apiService,
     )
 }
 

@@ -42,7 +42,7 @@ jobs:
         run: |
           python feed/generate_feed.py \
             --output-dir _site \
-            --competitions PL,PD,BL1,SA,FL1,CL \
+            --competitions PL,PD,BL1,SA,FL1,CL,WC,EC,INT \
             --days-back 3 \
             --days-ahead 21
 

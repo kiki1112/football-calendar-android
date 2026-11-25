@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -18,17 +19,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -38,14 +39,22 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.footballcalendar.app.model.DataSourceMode
 import com.footballcalendar.app.model.MatchItem
 import com.footballcalendar.app.ui.CalendarUiState
+import com.footballcalendar.app.ui.theme.AppleCanvas
+import com.footballcalendar.app.ui.theme.AppleRed
+import com.footballcalendar.app.ui.theme.AppleRedBorder
+import com.footballcalendar.app.ui.theme.AppleRedTint
+import com.footballcalendar.app.ui.theme.InkPrimary
+import com.footballcalendar.app.ui.theme.InkSecondary
+import com.footballcalendar.app.util.MatchTimeFormatter
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     state: CalendarUiState,
@@ -54,6 +63,7 @@ fun SettingsScreen(
     onUpdateSyncSettings: (Boolean, Int, Boolean) -> Unit,
     onUpdateDisplayAndNotifications: (Boolean, Boolean, Int, Boolean) -> Unit,
     onSyncSystemCalendarNow: () -> Unit,
+    onOpenMatchDetail: (MatchItem) -> Unit,
     onBuildShareIcsIntent: (List<MatchItem>, String) -> Intent?,
     onShowMessage: (String) -> Unit,
 ) {
@@ -99,50 +109,94 @@ fun SettingsScreen(
         val allGranted = perms.values.all { it }
         if (allGranted) {
             autoSyncCalendar = true
-            onUpdateDisplayAndNotifications(
-                watchNightGrouping,
-                notifyOnChange,
-                notifyBeforeMins,
-                true,
-            )
+            onUpdateDisplayAndNotifications(watchNightGrouping, notifyOnChange, notifyBeforeMins, true)
         } else {
             autoSyncCalendar = false
             onShowMessage("需要日历读写权限才能自动托管同步到系统日历")
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        TopAppBar(
-            title = {
+    val watchlistMatches = state.allMatches.filter { it.id in state.prefs.watchlistMatchIds }.sortedBy { it.utcDate }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(AppleCanvas),
+        contentPadding = PaddingValues(bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        item {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 20.dp, end = 20.dp, top = 12.dp),
+            ) {
                 Text(
-                    text = "同步源与系统设置",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
+                    text = "看球闹钟与 GitHub 订阅",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = AppleRed,
+                    fontWeight = FontWeight.SemiBold,
                 )
-            },
-        )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "清单与设置",
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = InkPrimary,
+                    letterSpacing = (-0.5).sp,
+                )
+            }
+        }
 
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            // 1. Data source configuration
-            item {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    shape = RoundedCornerShape(16.dp),
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
+        // Watchlist Card
+        item {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                color = Color.White,
+                shape = RoundedCornerShape(20.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, AppleRedBorder),
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        Text("♥ 我的必看清单（${watchlistMatches.size} 场）", fontWeight = FontWeight.Bold, color = AppleRed)
+                        Text("开赛前 ${notifyBeforeMins} 分提醒", style = MaterialTheme.typography.labelSmall, color = InkSecondary)
+                    }
+                    if (watchlistMatches.isEmpty()) {
                         Text(
-                            text = "赛程数据源",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
+                            text = "在日历卡片右上角点一下 ♥，即可把想熬夜看的焦点战加入必看清单。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = InkSecondary,
                         )
+                    } else {
+                        watchlistMatches.take(5).forEach { m ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onOpenMatchDetail(m) }
+                                    .padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text("${m.homeTeamZhName} vs ${m.awayTeamZhName}", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                                Text(MatchTimeFormatter.formatMonthDayTime(m.utcDate), style = MaterialTheme.typography.labelMedium, color = AppleRed)
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
+        // Data Source Group
+        item {
+            Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                Text("数据源配置", style = MaterialTheme.typography.labelLarge, color = InkSecondary, modifier = Modifier.padding(start = 6.dp, bottom = 6.dp))
+                Surface(color = Color.White, shape = RoundedCornerShape(20.dp)) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         DataSourceMode.entries.forEach { mode ->
                             Row(
                                 modifier = Modifier
@@ -151,17 +205,10 @@ fun SettingsScreen(
                                     .padding(vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                RadioButton(
-                                    selected = selectedMode == mode,
-                                    onClick = { selectedMode = mode },
-                                )
+                                RadioButton(selected = selectedMode == mode, onClick = { selectedMode = mode })
                                 Column(modifier = Modifier.padding(start = 8.dp)) {
-                                    Text(mode.displayName, fontWeight = FontWeight.SemiBold)
-                                    Text(
-                                        mode.description,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
+                                    Text(mode.displayName, fontWeight = FontWeight.SemiBold, color = InkPrimary)
+                                    Text(mode.description, style = MaterialTheme.typography.bodySmall, color = InkSecondary)
                                 }
                             }
                         }
@@ -172,11 +219,7 @@ fun SettingsScreen(
                                 onValueChange = { githubPagesUrl = it },
                                 modifier = Modifier.fillMaxWidth(),
                                 label = { Text("GitHub Pages 订阅地址") },
-                                placeholder = { Text("https://用户名.github.io/仓库名") },
                                 singleLine = true,
-                                supportingText = {
-                                    Text("支持填仓库 Pages 根路径或完整 fixtures.json 链接")
-                                },
                             )
                         }
 
@@ -187,24 +230,24 @@ fun SettingsScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 label = { Text("Football-Data.org X-Auth-Token") },
                                 singleLine = true,
-                                supportingText = {
-                                    Text("可在 football-data.org 免费注册获取")
-                                },
                             )
                         }
 
                         Button(
                             onClick = { onSaveDataSource(selectedMode, githubPagesUrl, apiKey) },
                             modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = AppleRed),
                             enabled = !state.isSyncing,
                         ) {
-                            Text(if (state.isSyncing) "正在同步..." else "保存并立即同步")
+                            Text(if (state.isSyncing) "正在同步..." else "保存并立即同步赛程与积分榜", fontWeight = FontWeight.Bold)
                         }
 
                         if (selectedMode == DataSourceMode.DEMO) {
                             OutlinedButton(
                                 onClick = onSimulateDemoUpdate,
                                 modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(14.dp),
                                 enabled = !state.isSyncing,
                             ) {
                                 Text("模拟赛程改期变更（测试自动 Diff 与通知）")
@@ -213,36 +256,22 @@ fun SettingsScreen(
                     }
                 }
             }
+        }
 
-            // 2. WorkManager Background Sync Settings
-            item {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    shape = RoundedCornerShape(16.dp),
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Text(
-                            text = "自动后台更新 (WorkManager)",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                        )
-
-                        SettingSwitchRow(
-                            title = "定时自动拉取最新赛程",
-                            subtitle = "在后台静默检查比赛改期、延期和比分更新",
+        // Background Sync & Display Group
+        item {
+            Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                Text("后台更新与观赛习惯", style = MaterialTheme.typography.labelLarge, color = InkSecondary, modifier = Modifier.padding(start = 6.dp, bottom = 6.dp))
+                Surface(color = Color.White, shape = RoundedCornerShape(20.dp)) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        AppleSwitchRow(
+                            title = "定时自动检查改期与比分",
+                            subtitle = "通过 WorkManager 后台静默更新赛程与积分榜",
                             checked = autoSyncEnabled,
                             onCheckedChange = { checked ->
                                 autoSyncEnabled = checked
                                 onUpdateSyncSettings(checked, intervalHours, wifiOnly)
                             },
-                        )
-
-                        Text(
-                            text = "同步周期",
-                            style = MaterialTheme.typography.labelLarge,
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             listOf(6, 12, 24).forEach { hrs ->
@@ -256,137 +285,65 @@ fun SettingsScreen(
                                 )
                             }
                         }
-
-                        SettingSwitchRow(
+                        HorizontalDivider(color = AppleCanvas)
+                        AppleSwitchRow(
                             title = "仅在 Wi-Fi 下后台更新",
-                            subtitle = "节省移动网络流量",
+                            subtitle = "节省移动数据流量",
                             checked = wifiOnly,
                             onCheckedChange = { checked ->
                                 wifiOnly = checked
                                 onUpdateSyncSettings(autoSyncEnabled, intervalHours, checked)
                             },
                         )
-                    }
-                }
-            }
-
-            // 3. Display & Notification Preferences
-            item {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    shape = RoundedCornerShape(16.dp),
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Text(
-                            text = "观赛显示与提醒",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                        )
-
-                        SettingSwitchRow(
+                        HorizontalDivider(color = AppleCanvas)
+                        AppleSwitchRow(
                             title = "观赛夜分组（凌晨场归入前夜）",
-                            subtitle = "次日 00:00–05:59 开球的欧洲赛事自动显示在前一天日历中",
+                            subtitle = "次日 00:00–05:59 欧洲赛事自动显示在前夜日历中",
                             checked = watchNightGrouping,
                             onCheckedChange = { checked ->
                                 watchNightGrouping = checked
-                                onUpdateDisplayAndNotifications(
-                                    checked,
-                                    notifyOnChange,
-                                    notifyBeforeMins,
-                                    autoSyncCalendar,
-                                )
+                                onUpdateDisplayAndNotifications(checked, notifyOnChange, notifyBeforeMins, autoSyncCalendar)
                             },
                         )
-
-                        SettingSwitchRow(
+                        HorizontalDivider(color = AppleCanvas)
+                        AppleSwitchRow(
                             title = "赛程改期 / 延期即时通知",
-                            subtitle = "后台发现关注球队比赛时间变化时推送提醒",
+                            subtitle = "关注球队开球时间变化时第一时间通知",
                             checked = notifyOnChange,
                             onCheckedChange = { checked ->
                                 if (checked && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                                     notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                                 }
                                 notifyOnChange = checked
-                                onUpdateDisplayAndNotifications(
-                                    watchNightGrouping,
-                                    checked,
-                                    notifyBeforeMins,
-                                    autoSyncCalendar,
-                                )
+                                onUpdateDisplayAndNotifications(watchNightGrouping, checked, notifyBeforeMins, autoSyncCalendar)
                             },
                         )
-
-                        Text(
-                            text = "开球前提醒窗口",
-                            style = MaterialTheme.typography.labelLarge,
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(0 to "关闭", 15 to "15分", 30 to "30分", 60 to "60分").forEach { (mins, label) ->
-                                FilterChip(
-                                    selected = notifyBeforeMins == mins,
-                                    onClick = {
-                                        if (mins > 0 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                                        }
-                                        notifyBeforeMins = mins
-                                        onUpdateDisplayAndNotifications(
-                                            watchNightGrouping,
-                                            notifyOnChange,
-                                            mins,
-                                            autoSyncCalendar,
-                                        )
-                                    },
-                                    label = { Text(label) },
-                                )
-                            }
-                        }
                     }
                 }
             }
+        }
 
-            // 4. Device System Calendar & ICS Export
-            item {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    shape = RoundedCornerShape(16.dp),
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Text(
-                            text = "系统日历托管与 .ics 导出",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                        )
-
-                        SettingSwitchRow(
+        // System Calendar & Export
+        item {
+            Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                Text("系统日历托管与导出", style = MaterialTheme.typography.labelLarge, color = InkSecondary, modifier = Modifier.padding(start = 6.dp, bottom = 6.dp))
+                Surface(color = Color.White, shape = RoundedCornerShape(20.dp)) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        AppleSwitchRow(
                             title = "自动同步到手机系统日历",
-                            subtitle = "自动维护独立的「足球赛事日历」账户，改期自动修正时间",
+                            subtitle = "自动维护独立「足球赛事日历」，改期自动修正",
                             checked = autoSyncCalendar,
                             onCheckedChange = { checked ->
                                 if (checked) {
                                     calendarPermissionLauncher.launch(
-                                        arrayOf(
-                                            Manifest.permission.READ_CALENDAR,
-                                            Manifest.permission.WRITE_CALENDAR,
-                                        ),
+                                        arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR),
                                     )
                                 } else {
                                     autoSyncCalendar = false
-                                    onUpdateDisplayAndNotifications(
-                                        watchNightGrouping,
-                                        notifyOnChange,
-                                        notifyBeforeMins,
-                                        false,
-                                    )
+                                    onUpdateDisplayAndNotifications(watchNightGrouping, notifyOnChange, notifyBeforeMins, false)
                                 }
                             },
                         )
-
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -394,15 +351,13 @@ fun SettingsScreen(
                             OutlinedButton(
                                 onClick = onSyncSystemCalendarNow,
                                 modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp),
                             ) {
-                                Text("立即写入系统日历")
+                                Text("写入系统日历")
                             }
                             OutlinedButton(
                                 onClick = {
-                                    val intent = onBuildShareIcsIntent(
-                                        state.filteredMatches,
-                                        "football_followed.ics",
-                                    )
+                                    val intent = onBuildShareIcsIntent(state.filteredMatches, "football_followed.ics")
                                     if (intent != null) {
                                         context.startActivity(Intent.createChooser(intent, "分享关注赛程 (.ics)"))
                                     } else {
@@ -410,6 +365,7 @@ fun SettingsScreen(
                                     }
                                 },
                                 modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp),
                             ) {
                                 Text("导出全部 .ics")
                             }
@@ -422,7 +378,7 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun SettingSwitchRow(
+private fun AppleSwitchRow(
     title: String,
     subtitle: String,
     checked: Boolean,
@@ -434,14 +390,20 @@ private fun SettingSwitchRow(
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-            Text(title, fontWeight = FontWeight.Medium)
+            Text(title, fontWeight = FontWeight.SemiBold, color = InkPrimary)
             Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = InkSecondary)
         }
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = AppleRed,
+                uncheckedThumbColor = Color.White,
+                uncheckedTrackColor = Color(0xFFE5E5EA),
+                uncheckedBorderColor = Color.Transparent,
+            ),
+        )
     }
 }

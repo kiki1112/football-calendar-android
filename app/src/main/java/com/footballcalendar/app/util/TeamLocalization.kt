@@ -48,6 +48,21 @@ object TeamLocalization {
         "Olympique de Marseille" to "马赛",
         "AS Monaco FC" to "摩纳哥",
         "Olympique Lyonnais" to "里昂",
+        "Inter Miami CF" to "迈阿密国际",
+        "Al-Nassr FC" to "利雅得胜利",
+        // National teams
+        "France" to "法国国家队",
+        "Argentina" to "阿根廷国家队",
+        "Spain" to "西班牙国家队",
+        "England" to "英格兰国家队",
+        "Germany" to "德国国家队",
+        "Brazil" to "巴西国家队",
+        "Portugal" to "葡萄牙国家队",
+        "Netherlands" to "荷兰国家队",
+        "Italy" to "意大利国家队",
+        "China PR" to "中国国家队",
+        "Japan" to "日本国家队",
+        "South Korea" to "韩国国家队",
     )
 
     fun localizeTeam(fullName: String, shortName: String? = null): String {
