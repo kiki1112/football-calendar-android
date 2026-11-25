@@ -68,10 +68,13 @@ object ScheduleDiffEngine {
             }
         }
 
-        // Preserve any incoming fixtures first, and keep recent historical cached matches not overwritten
+        // Only preserve historical FINISHED matches outside the latest fetch window.
+        // Never keep un-played/scheduled ghosts from stale caches or old sources.
         val incomingIds = incoming.asSequence().map { it.id }.toSet()
-        val preservedPast = existing.filter { it.id !in incomingIds }
-        val merged = (incoming + preservedPast).sortedBy { it.utcDate }
+        val preservedFinished = existing.filter {
+            it.id !in incomingIds && it.status == MatchStatus.FINISHED
+        }
+        val merged = (incoming + preservedFinished).sortedBy { it.utcDate }
 
         return DiffResult(
             mergedMatches = merged,

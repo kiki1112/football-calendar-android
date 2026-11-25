@@ -123,6 +123,7 @@ fun StandingsScreen(
                 shadowElevation = 1.dp,
             ) {
                 Column {
+                    val showFormColumn = rows.any { it.form.isNotBlank() }
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -134,7 +135,14 @@ fun StandingsScreen(
                         Text("球队", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall, color = InkTertiary, fontWeight = FontWeight.Bold)
                         Text("赛", modifier = Modifier.width(28.dp), textAlign = TextAlign.Center, style = MaterialTheme.typography.labelSmall, color = InkTertiary, fontWeight = FontWeight.Bold)
                         Text("净胜", modifier = Modifier.width(38.dp), textAlign = TextAlign.Center, style = MaterialTheme.typography.labelSmall, color = InkTertiary, fontWeight = FontWeight.Bold)
-                        Text("近5场", modifier = Modifier.width(52.dp), textAlign = TextAlign.Center, style = MaterialTheme.typography.labelSmall, color = InkTertiary, fontWeight = FontWeight.Bold)
+                        Text(
+                            if (showFormColumn) "近5场" else "胜/平/负",
+                            modifier = Modifier.width(56.dp),
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = InkTertiary,
+                            fontWeight = FontWeight.Bold,
+                        )
                         Text("积分", modifier = Modifier.width(34.dp), textAlign = TextAlign.End, style = MaterialTheme.typography.labelSmall, color = InkTertiary, fontWeight = FontWeight.Bold)
                     }
                     HorizontalDivider(color = AppleCanvas)
@@ -155,7 +163,7 @@ fun StandingsScreen(
                     } else {
                         rows.forEachIndexed { idx, entry ->
                             val isFav = entry.teamZhName in state.prefs.favoriteTeams || entry.teamName in state.prefs.favoriteTeams
-                            StandingRowItem(entry = entry, isFavorite = isFav)
+                            StandingRowItem(entry = entry, isFavorite = isFav, showFormColumn = showFormColumn)
                             if (idx < rows.lastIndex) {
                                 HorizontalDivider(color = AppleCanvas)
                             }
@@ -181,7 +189,7 @@ fun StandingsScreen(
 }
 
 @Composable
-private fun StandingRowItem(entry: StandingEntry, isFavorite: Boolean) {
+private fun StandingRowItem(entry: StandingEntry, isFavorite: Boolean, showFormColumn: Boolean) {
     val zoneBarColor = when {
         entry.rank <= 4 -> UclBlue
         entry.rank <= 6 -> AmberWarm
@@ -241,27 +249,37 @@ private fun StandingRowItem(entry: StandingEntry, isFavorite: Boolean) {
             color = InkSecondary,
         )
 
-        Row(
-            modifier = Modifier.width(52.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            val tokens = entry.form.split(",").filter { it.isNotBlank() }.takeLast(5)
-            tokens.forEach { res ->
-                Box(
-                    modifier = Modifier
-                        .padding(horizontal = 1.5.dp)
-                        .size(6.dp)
-                        .clip(CircleShape)
-                        .background(
-                            when (res.trim().uppercase()) {
-                                "W" -> AppleRed
-                                "D" -> AmberWarm
-                                else -> Color(0xFFD1D1D6)
-                            },
-                        ),
-                )
+        if (showFormColumn) {
+            Row(
+                modifier = Modifier.width(56.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                val tokens = entry.form.split(",").filter { it.isNotBlank() }.takeLast(5)
+                tokens.forEach { res ->
+                    Box(
+                        modifier = Modifier
+                            .padding(horizontal = 1.5.dp)
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(
+                                when (res.trim().uppercase()) {
+                                    "W" -> AppleRed
+                                    "D" -> AmberWarm
+                                    else -> Color(0xFFD1D1D6)
+                                },
+                            ),
+                    )
+                }
             }
+        } else {
+            Text(
+                text = "${entry.won}/${entry.draw}/${entry.lost}",
+                modifier = Modifier.width(56.dp),
+                textAlign = TextAlign.Center,
+                style = TextStyle(fontSize = 11.sp, fontFeatureSettings = "tnum"),
+                color = InkSecondary,
+            )
         }
 
         Text(

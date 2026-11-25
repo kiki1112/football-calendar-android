@@ -5,6 +5,7 @@ import androidx.room.PrimaryKey
 import com.footballcalendar.app.model.MatchItem
 import com.footballcalendar.app.model.MatchStatus
 import com.footballcalendar.app.util.TeamAssetCatalog
+import com.footballcalendar.app.util.TeamLocalization
 
 @Entity(tableName = "matches")
 data class MatchEntity(
@@ -31,30 +32,34 @@ data class MatchEntity(
     val homeTeamCrest: String = "",
     val awayTeamCrest: String = "",
 ) {
-    fun toDomain(): MatchItem = MatchItem(
-        id = id,
-        competitionCode = competitionCode,
-        competitionName = competitionName,
-        competitionZhName = competitionZhName,
-        matchday = matchday,
-        stage = stage,
-        utcDate = utcDate,
-        status = MatchStatus.fromRaw(status),
-        homeTeamId = homeTeamId,
-        homeTeamName = homeTeamName,
-        homeTeamShortName = homeTeamShortName,
-        homeTeamZhName = homeTeamZhName,
-        awayTeamId = awayTeamId,
-        awayTeamName = awayTeamName,
-        awayTeamShortName = awayTeamShortName,
-        awayTeamZhName = awayTeamZhName,
-        homeScore = homeScore,
-        awayScore = awayScore,
-        venue = venue,
-        lastUpdatedUtc = lastUpdatedUtc,
-        homeTeamCrest = homeTeamCrest.ifBlank { TeamAssetCatalog.resolveTeamLogo(homeTeamName) },
-        awayTeamCrest = awayTeamCrest.ifBlank { TeamAssetCatalog.resolveTeamLogo(awayTeamName) },
-    )
+    fun toDomain(): MatchItem {
+        val localizedHome = TeamLocalization.preferChinese(homeTeamName, homeTeamZhName)
+        val localizedAway = TeamLocalization.preferChinese(awayTeamName, awayTeamZhName)
+        return MatchItem(
+            id = id,
+            competitionCode = competitionCode,
+            competitionName = competitionName,
+            competitionZhName = TeamLocalization.localizeCompetition(competitionCode, competitionZhName),
+            matchday = matchday,
+            stage = stage,
+            utcDate = utcDate,
+            status = MatchStatus.fromRaw(status),
+            homeTeamId = homeTeamId,
+            homeTeamName = homeTeamName,
+            homeTeamShortName = homeTeamShortName,
+            homeTeamZhName = localizedHome,
+            awayTeamId = awayTeamId,
+            awayTeamName = awayTeamName,
+            awayTeamShortName = awayTeamShortName,
+            awayTeamZhName = localizedAway,
+            homeScore = homeScore,
+            awayScore = awayScore,
+            venue = venue,
+            lastUpdatedUtc = lastUpdatedUtc,
+            homeTeamCrest = homeTeamCrest.ifBlank { TeamAssetCatalog.resolveTeamLogo(homeTeamName) },
+            awayTeamCrest = awayTeamCrest.ifBlank { TeamAssetCatalog.resolveTeamLogo(awayTeamName) },
+        )
+    }
 
     companion object {
         fun fromDomain(item: MatchItem): MatchEntity = MatchEntity(

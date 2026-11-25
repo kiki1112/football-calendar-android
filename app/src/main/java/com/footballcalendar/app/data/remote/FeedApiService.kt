@@ -29,4 +29,10 @@ interface FeedApiService {
         @Url url: String,
         @Header("User-Agent") userAgent: String = "FootballCalendarApp/2.0 (https://github.com/kiki1112/football-calendar-android)",
     ): WikipediaSummaryResponse
+
+    @GET
+    suspend fun fetchWikipediaLanglinks(
+        @Url url: String,
+        @Header("User-Agent") userAgent: String = "FootballCalendarApp/2.0 (https://github.com/kiki1112/football-calendar-android)",
+    ): WikipediaLanglinksApiResponse
 }

@@ -9,6 +9,7 @@ import androidx.room.Query
 import androidx.room.Transaction
 import com.footballcalendar.app.model.StandingEntry
 import com.footballcalendar.app.util.TeamAssetCatalog
+import com.footballcalendar.app.util.TeamLocalization
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "standings")
@@ -31,7 +32,7 @@ data class StandingEntity(
         competitionCode = competitionCode,
         rank = rank,
         teamName = teamName,
-        teamZhName = teamZhName,
+        teamZhName = TeamLocalization.preferChinese(teamName, teamZhName),
         teamCrest = teamCrest.ifBlank { TeamAssetCatalog.resolveTeamLogo(teamName) },
         played = played,
         won = won,

@@ -259,3 +259,24 @@ data class WikipediaSummaryResponse(
 data class WikipediaThumbnailDto(
     val source: String = "",
 )
+
+@Serializable
+data class WikipediaLanglinksApiResponse(
+    val query: WikipediaLanglinksQueryDto? = null,
+)
+
+@Serializable
+data class WikipediaLanglinksQueryDto(
+    val pages: Map<String, WikipediaLanglinksPageDto> = emptyMap(),
+)
+
+@Serializable
+data class WikipediaLanglinksPageDto(
+    val langlinks: List<WikipediaLanglinkDto> = emptyList(),
+)
+
+@Serializable
+data class WikipediaLanglinkDto(
+    val lang: String = "",
+    @kotlinx.serialization.SerialName("*") val title: String = "",
+)

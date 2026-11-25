@@ -253,36 +253,42 @@ class FootballDataApiFixtureDataSource(
         }
 
         val standings = mutableListOf<StandingEntry>()
-        for (code in CompetitionCatalog.standingsCodes.filter { it in supportedCodes }) {
-            runCatching {
-                val resp = apiService.fetchCompetitionStandings(apiKey, code)
-                val table = resp.standings.firstOrNull { it.type == "TOTAL" }?.table
-                    ?: resp.standings.firstOrNull()?.table
-                    ?: emptyList()
-                table.take(20).forEach { r ->
-                    val tName = r.team?.name ?: "Unknown"
-                    val tShort = r.team?.shortName ?: r.team?.tla ?: tName
-                    standings += StandingEntry(
-                        competitionCode = code,
-                        rank = r.position,
-                        teamName = tName,
-                        teamZhName = TeamLocalization.localizeTeam(tName, tShort),
-                        teamCrest = TeamAssetCatalog.resolveTeamLogo(tName, r.team?.crest),
-                        played = r.playedGames,
-                        won = r.won,
-                        draw = r.draw,
-                        lost = r.lost,
-                        goalDifference = r.goalDifference,
-                        points = r.points,
-                        form = r.form ?: "",
-                    )
+        val sourceChanged = prefs.lastSyncedMode != DataSourceMode.FOOTBALL_DATA_API.name
+        val standingsFresh = !sourceChanged &&
+            (System.currentTimeMillis() - prefs.lastStandingsSyncMillis) < 10 * 60 * 1000L
+
+        if (!standingsFresh) {
+            for (code in CompetitionCatalog.standingsCodes.filter { it in supportedCodes }) {
+                runCatching {
+                    val resp = apiService.fetchCompetitionStandings(apiKey, code)
+                    val table = resp.standings.firstOrNull { it.type == "TOTAL" }?.table
+                        ?: resp.standings.firstOrNull()?.table
+                        ?: emptyList()
+                    table.take(20).forEach { r ->
+                        val tName = r.team?.name ?: "Unknown"
+                        val tShort = r.team?.shortName ?: r.team?.tla ?: tName
+                        standings += StandingEntry(
+                            competitionCode = code,
+                            rank = r.position,
+                            teamName = tName,
+                            teamZhName = TeamLocalization.localizeTeam(tName, tShort),
+                            teamCrest = TeamAssetCatalog.resolveTeamLogo(tName, r.team?.crest),
+                            played = r.playedGames,
+                            won = r.won,
+                            draw = r.draw,
+                            lost = r.lost,
+                            goalDifference = r.goalDifference,
+                            points = r.points,
+                            form = r.form ?: "",
+                        )
+                    }
                 }
             }
         }
 
         return SyncPayload(
             matches = collected.values.toList(),
-            standings = standings.ifEmpty { MockFixtureDataSource.demoStandings() },
+            standings = standings,
             players = TeamAssetCatalog.starPlayers,
         )
     }

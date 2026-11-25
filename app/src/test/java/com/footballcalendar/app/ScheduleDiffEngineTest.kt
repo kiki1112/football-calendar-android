@@ -53,11 +53,12 @@ class ScheduleDiffEngineTest {
     }
 
     @Test
-    fun detectsReschedulePostponeScoreUpdateAndNewMatch() {
+    fun detectsReschedulePostponeScoreUpdateAndDropsStaleScheduledGhosts() {
         val existing = listOf(
             sampleMatch(id = "m-1", utcDate = "2026-11-26T19:00:00Z"),
             sampleMatch(id = "m-2", status = MatchStatus.TIMED),
             sampleMatch(id = "m-3", status = MatchStatus.TIMED),
+            sampleMatch(id = "demo-ghost", utcDate = "2026-11-25T17:30:00Z", status = MatchStatus.TIMED),
             sampleMatch(id = "m-old", utcDate = "2026-11-20T19:00:00Z", status = MatchStatus.FINISHED),
         )
         val incoming = listOf(
@@ -74,7 +75,8 @@ class ScheduleDiffEngineTest {
         assertEquals(ScheduleChangeType.POSTPONED, types["m-2"])
         assertEquals(ScheduleChangeType.SCORE_UPDATED, types["m-3"])
         assertEquals(ScheduleChangeType.ADDED, types["m-4"])
-        // Historical match m-old preserved alongside 4 incoming fixtures
+        // Historical FINISHED m-old preserved; stale unplayed demo-ghost dropped
         assertEquals(5, result.mergedMatches.size)
+        assertTrue(result.mergedMatches.none { it.id == "demo-ghost" })
     }
 }

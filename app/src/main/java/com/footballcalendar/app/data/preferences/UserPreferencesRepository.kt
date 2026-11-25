@@ -36,6 +36,8 @@ data class UserPreferences(
     val autoSyncSystemCalendar: Boolean = false,
     val lastSyncUtc: String = "",
     val lastSyncSummary: String = "尚未同步",
+    val lastSyncedMode: String = "",
+    val lastStandingsSyncMillis: Long = 0L,
     val notifiedMatchIds: Set<String> = emptySet(),
     val demoMutationStep: Int = 0,
 )
@@ -58,6 +60,8 @@ class UserPreferencesRepository(private val context: Context) {
         val AUTO_SYNC_SYSTEM_CALENDAR = booleanPreferencesKey("auto_sync_system_calendar")
         val LAST_SYNC_UTC = stringPreferencesKey("last_sync_utc")
         val LAST_SYNC_SUMMARY = stringPreferencesKey("last_sync_summary")
+        val LAST_SYNCED_MODE = stringPreferencesKey("last_synced_mode")
+        val LAST_STANDINGS_SYNC_MILLIS = androidx.datastore.preferences.core.longPreferencesKey("last_standings_sync_millis")
         val NOTIFIED_MATCH_IDS = stringSetPreferencesKey("notified_match_ids")
         val DEMO_MUTATION_STEP = intPreferencesKey("demo_mutation_step")
     }
@@ -80,6 +84,8 @@ class UserPreferencesRepository(private val context: Context) {
             autoSyncSystemCalendar = prefs[Keys.AUTO_SYNC_SYSTEM_CALENDAR] ?: false,
             lastSyncUtc = prefs[Keys.LAST_SYNC_UTC] ?: "",
             lastSyncSummary = prefs[Keys.LAST_SYNC_SUMMARY] ?: "尚未同步",
+            lastSyncedMode = prefs[Keys.LAST_SYNCED_MODE] ?: "",
+            lastStandingsSyncMillis = prefs[Keys.LAST_STANDINGS_SYNC_MILLIS] ?: 0L,
             notifiedMatchIds = prefs[Keys.NOTIFIED_MATCH_IDS] ?: emptySet(),
             demoMutationStep = prefs[Keys.DEMO_MUTATION_STEP] ?: 0,
         )
@@ -158,10 +164,19 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
-    suspend fun recordSyncResult(syncedAtUtc: String, summary: String) {
+    suspend fun recordSyncResult(
+        syncedAtUtc: String,
+        summary: String,
+        sourceMode: DataSourceMode,
+        standingsSyncedAtMillis: Long? = null,
+    ) {
         context.userPrefsDataStore.edit { prefs ->
             prefs[Keys.LAST_SYNC_UTC] = syncedAtUtc
             prefs[Keys.LAST_SYNC_SUMMARY] = summary
+            prefs[Keys.LAST_SYNCED_MODE] = sourceMode.name
+            if (standingsSyncedAtMillis != null) {
+                prefs[Keys.LAST_STANDINGS_SYNC_MILLIS] = standingsSyncedAtMillis
+            }
         }
     }
 

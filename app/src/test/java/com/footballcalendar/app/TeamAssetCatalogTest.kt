@@ -15,6 +15,14 @@ class TeamAssetCatalogTest {
         assertTrue(TeamAssetCatalog.resolveTeamLogo("France").startsWith("https://"))
         assertEquals("阿根廷国家队", TeamLocalization.localizeTeam("Argentina"))
         assertEquals("中国国家队", TeamLocalization.localizeTeam("China PR"))
+        assertEquals("布莱顿", TeamLocalization.localizeTeam("Brighton & Hove Albion FC", "Brighton Hove"))
+        assertEquals("伯恩茅斯", TeamLocalization.localizeTeam("AFC Bournemouth", "Bournemouth"))
+        assertEquals("布伦特福德", TeamLocalization.localizeTeam("Brentford FC", "Brentford"))
+        assertEquals("利兹联", TeamLocalization.localizeTeam("Leeds United FC", "Leeds United"))
+        assertEquals("赫尔城", TeamLocalization.localizeTeam("Hull City AFC", "Hull City"))
+        assertEquals("考文垂", TeamLocalization.localizeTeam("Coventry City FC", "Coventry City"))
+        assertEquals("布鲁日", TeamLocalization.localizeTeam("Club Brugge KV", "Club Brugge"))
+        assertEquals("桑德兰", TeamLocalization.localizeTeam("Sunderland AFC", "Sunderland"))
     }
 
     @Test
