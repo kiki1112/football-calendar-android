@@ -10,6 +10,8 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 object MatchTimeFormatter {
+    val BEIJING_ZONE: ZoneId = ZoneId.of("Asia/Shanghai")
+
     private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm", Locale.CHINA)
     private val monthDayTimeFormatter = DateTimeFormatter.ofPattern("MM-dd HH:mm", Locale.CHINA)
     private val yearMonthFormatter = DateTimeFormatter.ofPattern("yyyy年M月", Locale.CHINA)
@@ -23,18 +25,18 @@ object MatchTimeFormatter {
         }.getOrNull()
     }
 
-    fun toLocalZonedDateTime(utcIso: String, zoneId: ZoneId = ZoneId.systemDefault()): ZonedDateTime? {
+    fun toLocalZonedDateTime(utcIso: String, zoneId: ZoneId = BEIJING_ZONE): ZonedDateTime? {
         return parseInstant(utcIso)?.atZone(zoneId)
     }
 
     /**
-     * Maps a kickoff timestamp to the calendar bucket date.
+     * Maps a kickoff timestamp to the calendar bucket date in Beijing Time (UTC+8).
      * When [watchNightGrouping] is true, early-morning matches (00:00..05:59) are grouped
      * under the previous evening's "watch night" date so European late fixtures are easy to spot.
      */
     fun displayDateFor(
         utcIso: String,
-        zoneId: ZoneId = ZoneId.systemDefault(),
+        zoneId: ZoneId = BEIJING_ZONE,
         watchNightGrouping: Boolean = true,
     ): LocalDate? {
         val localDt = toLocalZonedDateTime(utcIso, zoneId) ?: return null
@@ -45,17 +47,17 @@ object MatchTimeFormatter {
         }
     }
 
-    fun isEarlyMorning(utcIso: String, zoneId: ZoneId = ZoneId.systemDefault()): Boolean {
+    fun isEarlyMorning(utcIso: String, zoneId: ZoneId = BEIJING_ZONE): Boolean {
         val localDt = toLocalZonedDateTime(utcIso, zoneId) ?: return false
         return localDt.hour in 0..5
     }
 
-    fun formatKickoffTime(utcIso: String, zoneId: ZoneId = ZoneId.systemDefault()): String {
+    fun formatKickoffTime(utcIso: String, zoneId: ZoneId = BEIJING_ZONE): String {
         val localDt = toLocalZonedDateTime(utcIso, zoneId) ?: return "--:--"
         return timeFormatter.format(localDt)
     }
 
-    fun formatMonthDayTime(utcIso: String, zoneId: ZoneId = ZoneId.systemDefault()): String {
+    fun formatMonthDayTime(utcIso: String, zoneId: ZoneId = BEIJING_ZONE): String {
         val localDt = toLocalZonedDateTime(utcIso, zoneId) ?: return utcIso
         return monthDayTimeFormatter.format(localDt)
     }
@@ -67,7 +69,7 @@ object MatchTimeFormatter {
     fun formatRelativeCountdown(
         utcIso: String,
         now: Instant = Instant.now(),
-        zoneId: ZoneId = ZoneId.systemDefault(),
+        zoneId: ZoneId = BEIJING_ZONE,
     ): String {
         val kickoff = parseInstant(utcIso) ?: return ""
         val diff = Duration.between(now, kickoff)

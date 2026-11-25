@@ -1,10 +1,11 @@
 package com.footballcalendar.app.util
 
 import com.footballcalendar.app.model.CompetitionCatalog
+import java.text.Normalizer
 
 object TeamLocalization {
     private val exactTeamZhMap = mapOf(
-        // Premier League & English Championship
+        // England - Premier League & Championship
         "Arsenal FC" to "阿森纳",
         "Arsenal" to "阿森纳",
         "Manchester City FC" to "曼城",
@@ -61,7 +62,9 @@ object TeamLocalization {
         "Coventry City" to "考文垂",
         "Luton Town FC" to "卢顿",
         "Middlesbrough FC" to "米德尔斯堡",
+        "Middlesbrough" to "米德尔斯堡",
         "Norwich City FC" to "诺维奇",
+        "Norwich" to "诺维奇",
         "West Bromwich Albion FC" to "西布朗",
         "West Brom" to "西布朗",
         "Watford FC" to "沃特福德",
@@ -83,7 +86,7 @@ object TeamLocalization {
         "Wrexham AFC" to "雷克瑟姆",
         "Charlton Athletic FC" to "查尔顿",
 
-        // La Liga
+        // Spain - La Liga & Segunda
         "Real Madrid CF" to "皇家马德里",
         "Real Madrid" to "皇家马德里",
         "FC Barcelona" to "巴塞罗那",
@@ -128,10 +131,37 @@ object TeamLocalization {
         "Real Valladolid CF" to "巴拉多利德",
         "Real Valladolid" to "巴拉多利德",
         "Levante UD" to "莱万特",
+        "Levante" to "莱万特",
         "Elche CF" to "埃尔切",
+        "Elche" to "埃尔切",
         "Real Oviedo" to "奥维耶多",
+        "Real Racing Club de Santander" to "桑坦德竞技",
+        "Racing Santander" to "桑坦德竞技",
+        "Santander" to "桑坦德竞技",
+        "RC Deportivo de La Coruña" to "拉科鲁尼亚",
+        "Deportivo La Coruña" to "拉科鲁尼亚",
+        "Deportivo" to "拉科鲁尼亚",
+        "Málaga CF" to "马拉加",
+        "Málaga" to "马拉加",
+        "Malaga" to "马拉加",
+        "Real Zaragoza" to "萨拉戈萨",
+        "Real Sporting de Gijón" to "希洪竞技",
+        "Sporting Gijón" to "希洪竞技",
+        "Granada CF" to "格拉纳达",
+        "Cádiz CF" to "加的斯",
+        "UD Almería" to "阿尔梅里亚",
+        "SD Eibar" to "埃瓦尔",
+        "CD Tenerife" to "特内里费",
+        "CD Mirandés" to "米兰德斯",
+        "SD Huesca" to "韦斯卡",
+        "Burgos CF" to "布尔戈斯",
+        "Córdoba CF" to "科尔多瓦",
+        "CD Castellón" to "卡斯特利翁",
+        "Albacete Balompié" to "阿尔瓦塞特",
+        "Racing Club de Ferrol" to "费罗尔竞技",
+        "FC Andorra" to "安道尔",
 
-        // Bundesliga
+        // Germany - Bundesliga & 2. Bundesliga
         "FC Bayern München" to "拜仁慕尼黑",
         "Bayern Munich" to "拜仁慕尼黑",
         "Bayern" to "拜仁慕尼黑",
@@ -173,8 +203,27 @@ object TeamLocalization {
         "Hamburger SV" to "汉堡",
         "1. FC Köln" to "科隆",
         "FC Schalke 04" to "沙尔克04",
+        "SV 07 Elversberg" to "埃尔弗斯贝格",
+        "Elversberg" to "埃尔弗斯贝格",
+        "SC Paderborn 07" to "帕德博恩",
+        "SC Paderborn" to "帕德博恩",
+        "Paderborn" to "帕德博恩",
+        "Fortuna Düsseldorf" to "杜塞尔多夫",
+        "Karlsruher SC" to "卡尔斯鲁厄",
+        "1. FC Kaiserslautern" to "凯泽斯劳滕",
+        "Kaiserslautern" to "凯泽斯劳滕",
+        "Hannover 96" to "汉诺威96",
+        "1. FC Nürnberg" to "纽伦堡",
+        "Hertha BSC" to "柏林赫塔",
+        "SpVgg Greuther Fürth" to "菲尔特",
+        "1. FC Magdeburg" to "马格德堡",
+        "SV Darmstadt 98" to "达姆施塔特",
+        "SC Preußen Münster" to "明斯特普鲁士",
+        "Eintracht Braunschweig" to "布伦瑞克",
+        "Arminia Bielefeld" to "比勒费尔德",
+        "SG Dynamo Dresden" to "德累斯顿迪纳摩",
 
-        // Serie A
+        // Italy - Serie A & Serie B
         "FC Internazionale Milano" to "国际米兰",
         "Inter Milan" to "国际米兰",
         "Inter" to "国际米兰",
@@ -220,8 +269,15 @@ object TeamLocalization {
         "Sassuolo" to "萨索洛",
         "US Cremonese" to "克雷莫内塞",
         "Pisa SC" to "比萨",
+        "Palermo FC" to "巴勒莫",
+        "UC Sampdoria" to "桑普多利亚",
+        "SSC Bari" to "巴里",
+        "Spezia Calcio" to "斯佩齐亚",
+        "Modena FC" to "摩德纳",
+        "Cesena FC" to "切塞纳",
+        "Frosinone Calcio" to "弗罗西诺内",
 
-        // Ligue 1
+        // France - Ligue 1 & Ligue 2
         "Paris Saint-Germain FC" to "巴黎圣日耳曼",
         "Paris SG" to "巴黎圣日耳曼",
         "PSG" to "巴黎圣日耳曼",
@@ -264,22 +320,36 @@ object TeamLocalization {
         "Paris FC" to "巴黎FC",
         "FC Lorient" to "洛里昂",
         "FC Metz" to "梅斯",
+        "Red Star FC" to "巴黎红星",
+        "USL Dunkerque" to "敦刻尔克",
+        "ESTAC Troyes" to "特鲁瓦",
 
-        // Champions League / European regulars
+        // European / Champions League / International Clubs
         "Club Brugge KV" to "布鲁日",
         "Club Brugge" to "布鲁日",
+        "Sabah FK" to "萨巴赫",
+        "Sabah" to "萨巴赫",
+        "FK Kairat" to "阿拉木图凯拉特",
+        "Kairat" to "阿拉木图凯拉特",
+        "Pafos FC" to "帕福斯",
+        "Pafos" to "帕福斯",
         "PSV" to "埃因霍温",
         "PSV Eindhoven" to "埃因霍温",
         "Feyenoord Rotterdam" to "费耶诺德",
         "Feyenoord" to "费耶诺德",
         "AFC Ajax" to "阿贾克斯",
         "Ajax" to "阿贾克斯",
+        "AZ Alkmaar" to "阿尔克马尔",
+        "AZ" to "阿尔克马尔",
+        "FC Twente" to "特温特",
+        "FC Utrecht" to "乌得勒支",
         "Sporting Clube de Portugal" to "葡萄牙体育",
         "Sporting CP" to "葡萄牙体育",
         "Sport Lisboa e Benfica" to "本菲卡",
         "Benfica" to "本菲卡",
         "FC Porto" to "波尔图",
         "Porto" to "波尔图",
+        "SC Braga" to "布拉加",
         "Celtic FC" to "凯尔特人",
         "Celtic" to "凯尔特人",
         "Rangers FC" to "流浪者",
@@ -291,22 +361,42 @@ object TeamLocalization {
         "SK Sturm Graz" to "格拉茨风暴",
         "AC Sparta Praha" to "布拉格斯巴达",
         "SK Slavia Praha" to "布拉格斯拉维亚",
+        "FC Viktoria Plzeň" to "比尔森胜利",
         "GNK Dinamo Zagreb" to "萨格勒布迪纳摩",
         "FK Crvena Zvezda" to "贝尔格莱德红星",
         "Red Star" to "贝尔格莱德红星",
         "BSC Young Boys" to "伯尔尼年轻人",
+        "FC Basel 1893" to "巴塞尔",
         "Galatasaray SK" to "加拉塔萨雷",
         "Galatasaray" to "加拉塔萨雷",
         "Fenerbahçe SK" to "费内巴切",
+        "Fenerbahce" to "费内巴切",
+        "Beşiktaş JK" to "贝西克塔斯",
         "Olympiacos FC" to "奥林匹亚科斯",
+        "PAOK FC" to "塞萨洛尼基",
+        "AEK Athens FC" to "雅典AEK",
+        "Panathinaikos FC" to "帕纳辛奈科斯",
         "FK Bodø/Glimt" to "博德闪耀",
         "Bodø/Glimt" to "博德闪耀",
         "Royale Union Saint-Gilloise" to "圣吉罗斯联合",
         "Union SG" to "圣吉罗斯联合",
+        "KRC Genk" to "亨克",
+        "KAA Gent" to "根特",
+        "Royal Antwerp FC" to "安特卫普",
         "Qarabağ FK" to "卡拉巴赫",
         "FC København" to "哥本哈根",
         "FC Copenhagen" to "哥本哈根",
+        "FC Midtjylland" to "中日德兰",
+        "Malmö FF" to "马尔默",
+        "Ferencvárosi TC" to "费伦茨瓦罗斯",
+        "ŠK Slovan Bratislava" to "布拉迪斯拉发",
+        "PFC Ludogorets 1945" to "卢多戈雷茨",
+        "FCSB" to "布加勒斯特星",
         "RSC Anderlecht" to "安德莱赫特",
+        "Legia Warszawa" to "华沙莱吉亚",
+        "Lech Poznań" to "波兹南莱赫",
+        "Molde FK" to "莫尔德",
+        "SK Brann" to "布兰",
         "Inter Miami CF" to "迈阿密国际",
         "Al-Nassr FC" to "利雅得胜利",
 
@@ -359,12 +449,21 @@ object TeamLocalization {
         .entries
         .associate { (k, v) -> normalizeKey(k) to v }
 
+    private fun stripAccents(input: String): String {
+        val norm = Normalizer.normalize(input, Normalizer.Form.NFD)
+        return norm.replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
+    }
+
     private fun normalizeKey(raw: String): String {
-        return raw.lowercase()
+        return stripAccents(raw)
+            .lowercase()
+            .replace("ø", "o")
+            .replace("ł", "l")
+            .replace("đ", "d")
             .replace("&", " ")
             .replace(".", " ")
             .replace("-", " ")
-            .replace(Regex("\\b(fc|cf|afc|kv|bc|sc|sv|sk|fk|ssc|ac|as|us|rc|rcd|cd|ud|ca|ogc|vfl|vfb|tsg|fsv|bsc|gnk|sl)\\b"), " ")
+            .replace(Regex("\\b(fc|cf|afc|kv|bc|sc|sv|sk|fk|ssc|ac|as|us|rc|rcd|cd|ud|ca|ogc|vfl|vfb|tsg|fsv|bsc|gnk|sl|jk|ff|sd|ad|spvgg|04|05|07|96|98|1846|1848|1893|1899|1901|1907|1909|1910|1913|1945)\\b"), " ")
             .replace(Regex("\\s+"), " ")
             .trim()
     }

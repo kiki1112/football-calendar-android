@@ -51,6 +51,7 @@ data class CalendarUiState(
     val dayClashWarnings: List<String> = emptyList(),
     val standingsByLeague: Map<String, List<StandingEntry>> = emptyMap(),
     val teamRankByName: Map<String, StandingEntry> = emptyMap(),
+    val teamRankByLeagueAndName: Map<Pair<String, String>, StandingEntry> = emptyMap(),
     val selectedStandingsLeague: String = "PL",
     val starPlayers: List<StarPlayer> = emptyList(),
     val selectedStarPlayer: StarPlayer? = null,
@@ -60,7 +61,12 @@ data class CalendarUiState(
     val recentChanges: List<ScheduleChange> = emptyList(),
     val bannerMessage: String? = null,
     val selectedMatchDetail: MatchItem? = null,
-)
+) {
+    fun standingFor(competitionCode: String, teamZh: String, teamEn: String): StandingEntry? {
+        return teamRankByLeagueAndName[competitionCode to teamZh]
+            ?: teamRankByLeagueAndName[competitionCode to teamEn]
+    }
+}
 
 private data class UiInteractionState(
     val currentMonth: YearMonth = YearMonth.now(),
@@ -94,7 +100,7 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
         prefsRepo.preferencesFlow,
         uiInteraction,
     ) { allMatches, allStandings, players, prefs, ui ->
-        val zoneId = ZoneId.systemDefault()
+        val zoneId = MatchTimeFormatter.BEIJING_ZONE
         val filtered = allMatches.filter { match ->
             val leagueAllowed = match.competitionCode in prefs.followedCompetitions
             val chipAllowed = when (ui.selectedLeagueFilter) {
@@ -139,6 +145,12 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
                 putIfAbsent(entry.teamZhName, entry)
             }
         }
+        val leagueRankMap = buildMap<Pair<String, String>, StandingEntry> {
+            allStandings.forEach { entry ->
+                put(entry.competitionCode to entry.teamName, entry)
+                put(entry.competitionCode to entry.teamZhName, entry)
+            }
+        }
 
         CalendarUiState(
             currentMonth = ui.currentMonth,
@@ -154,6 +166,7 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
             dayClashWarnings = clashWarnings,
             standingsByLeague = standingsGrouped,
             teamRankByName = rankMap,
+            teamRankByLeagueAndName = leagueRankMap,
             selectedStandingsLeague = ui.selectedStandingsLeague,
             starPlayers = players,
             selectedStarPlayer = ui.selectedStarPlayer,

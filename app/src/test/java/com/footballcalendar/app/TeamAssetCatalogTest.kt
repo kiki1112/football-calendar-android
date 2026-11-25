@@ -23,6 +23,12 @@ class TeamAssetCatalogTest {
         assertEquals("考文垂", TeamLocalization.localizeTeam("Coventry City FC", "Coventry City"))
         assertEquals("布鲁日", TeamLocalization.localizeTeam("Club Brugge KV", "Club Brugge"))
         assertEquals("桑德兰", TeamLocalization.localizeTeam("Sunderland AFC", "Sunderland"))
+        assertEquals("埃尔弗斯贝格", TeamLocalization.localizeTeam("SV 07 Elversberg", "Elversberg"))
+        assertEquals("帕德博恩", TeamLocalization.localizeTeam("SC Paderborn 07", "SC Paderborn"))
+        assertEquals("桑坦德竞技", TeamLocalization.localizeTeam("Real Racing Club de Santander", "Santander"))
+        assertEquals("拉科鲁尼亚", TeamLocalization.localizeTeam("RC Deportivo de La Coruña", "Deportivo"))
+        assertEquals("马拉加", TeamLocalization.localizeTeam("Málaga CF", "Málaga"))
+        assertEquals("萨巴赫", TeamLocalization.localizeTeam("Sabah FK", "Sabah FK"))
     }
 
     @Test

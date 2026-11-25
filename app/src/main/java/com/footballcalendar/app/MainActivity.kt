@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -26,9 +27,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
@@ -89,7 +92,14 @@ private fun FootballCalendarRoot(
         }
     }
 
+    val hasModalOpen = state.selectedMatchDetail != null || state.selectedStarPlayer != null
+    val backdropBlur by animateDpAsState(
+        targetValue = if (hasModalOpen) 18.dp else 0.dp,
+        label = "backdropBlur",
+    )
+
     Scaffold(
+        modifier = if (backdropBlur > 0.dp) Modifier.blur(backdropBlur) else Modifier,
         containerColor = AppleCanvas,
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         bottomBar = {
@@ -142,6 +152,15 @@ private fun FootballCalendarRoot(
                     onDismissChanges = viewModel::dismissChangesBanner,
                     onOpenMatchDetail = viewModel::openMatchDetail,
                     onCloseMatchDetail = viewModel::closeMatchDetail,
+                    onOpenPlayerDetail = { player ->
+                        viewModel.closeMatchDetail()
+                        viewModel.openPlayerDetail(player)
+                        navController.navigate(AppTab.TEAMS.route) {
+                            popUpTo(AppTab.CALENDAR.route) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
                     onToggleFavoriteTeam = viewModel::toggleFavoriteTeam,
                     onToggleWatchlist = viewModel::toggleWatchlistMatch,
                     onBuildCalendarIntent = viewModel::buildAddToCalendarIntent,

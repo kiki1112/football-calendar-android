@@ -11,9 +11,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -22,6 +24,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
@@ -50,6 +53,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -72,8 +76,10 @@ import com.footballcalendar.app.model.CompetitionCatalog
 import com.footballcalendar.app.model.MatchItem
 import com.footballcalendar.app.model.ScheduleChange
 import com.footballcalendar.app.model.StandingEntry
+import com.footballcalendar.app.model.StarPlayer
 import com.footballcalendar.app.ui.CalendarUiState
 import com.footballcalendar.app.ui.components.AppleSegmentedControl
+import com.footballcalendar.app.ui.components.PlayerPortrait
 import com.footballcalendar.app.ui.components.TeamCrest
 import com.footballcalendar.app.ui.theme.AmberTint
 import com.footballcalendar.app.ui.theme.AmberWarm
@@ -111,6 +117,7 @@ fun CalendarScreen(
     onDismissChanges: () -> Unit,
     onOpenMatchDetail: (MatchItem) -> Unit,
     onCloseMatchDetail: () -> Unit,
+    onOpenPlayerDetail: (StarPlayer) -> Unit,
     onToggleFavoriteTeam: (String) -> Unit,
     onToggleWatchlist: (String) -> Unit,
     onBuildCalendarIntent: (MatchItem) -> Intent,
@@ -189,7 +196,16 @@ fun CalendarScreen(
                 item {
                     HeroNextMatchCard(
                         match = state.heroMatch,
-                        teamRankByName = state.teamRankByName,
+                        homeRank = state.standingFor(
+                            state.heroMatch.competitionCode,
+                            state.heroMatch.homeTeamZhName,
+                            state.heroMatch.homeTeamName,
+                        )?.rank,
+                        awayRank = state.standingFor(
+                            state.heroMatch.competitionCode,
+                            state.heroMatch.awayTeamZhName,
+                            state.heroMatch.awayTeamName,
+                        )?.rank,
                         onClick = { onOpenMatchDetail(state.heroMatch) },
                     )
                 }
@@ -320,8 +336,8 @@ fun CalendarScreen(
                         match = match,
                         isFavoriteTeamMatch = match.involvesAnyTeam(state.prefs.favoriteTeams),
                         isWatchlisted = match.id in state.prefs.watchlistMatchIds,
-                        homeRank = state.teamRankByName[match.homeTeamZhName]?.rank,
-                        awayRank = state.teamRankByName[match.awayTeamZhName]?.rank,
+                        homeRank = state.standingFor(match.competitionCode, match.homeTeamZhName, match.homeTeamName)?.rank,
+                        awayRank = state.standingFor(match.competitionCode, match.awayTeamZhName, match.awayTeamName)?.rank,
                         onClick = { onOpenMatchDetail(match) },
                         onToggleWatchlist = { onToggleWatchlist(match.id) },
                     )
@@ -332,16 +348,30 @@ fun CalendarScreen(
 
     val detail = state.selectedMatchDetail
     if (detail != null) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val relatedPlayers = remember(detail.id, state.starPlayers) {
+            state.starPlayers.filter { p ->
+                (p.clubZhName.isNotBlank() && detail.involvesTeam(p.clubZhName)) ||
+                    (p.clubName.isNotBlank() && detail.involvesTeam(p.clubName)) ||
+                    (p.nationalZhName.isNotBlank() && detail.involvesTeam(p.nationalZhName)) ||
+                    (p.nationalName.isNotBlank() && detail.involvesTeam(p.nationalName))
+            }
+        }
         ModalBottomSheet(
             onDismissRequest = onCloseMatchDetail,
-            containerColor = Color.White,
+            sheetState = sheetState,
+            containerColor = Color.White.copy(alpha = 0.94f),
+            scrimColor = Color(0x4A1C1C1E),
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
         ) {
             MatchDetailBottomSheet(
                 match = detail,
                 favoriteTeams = state.prefs.favoriteTeams,
                 isWatchlisted = detail.id in state.prefs.watchlistMatchIds,
-                homeStanding = state.teamRankByName[detail.homeTeamZhName],
-                awayStanding = state.teamRankByName[detail.awayTeamZhName],
+                homeStanding = state.standingFor(detail.competitionCode, detail.homeTeamZhName, detail.homeTeamName),
+                awayStanding = state.standingFor(detail.competitionCode, detail.awayTeamZhName, detail.awayTeamName),
+                relatedPlayers = relatedPlayers,
+                onClickPlayer = onOpenPlayerDetail,
                 onToggleFavorite = onToggleFavoriteTeam,
                 onToggleWatchlist = { onToggleWatchlist(detail.id) },
                 onAddToSystemCalendar = { context.startActivity(onBuildCalendarIntent(detail)) },
@@ -358,7 +388,8 @@ fun CalendarScreen(
 @Composable
 private fun HeroNextMatchCard(
     match: MatchItem,
-    teamRankByName: Map<String, StandingEntry>,
+    homeRank: Int?,
+    awayRank: Int?,
     onClick: () -> Unit,
 ) {
     var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -389,8 +420,6 @@ private fun HeroNextMatchCard(
         }
     }
 
-    val homeRank = teamRankByName[match.homeTeamZhName]?.rank
-    val awayRank = teamRankByName[match.awayTeamZhName]?.rank
     val tagText = when {
         match.isInternational -> "国家队焦点"
         homeRank != null && awayRank != null -> "第${homeRank}名 vs 第${awayRank}名"
@@ -473,7 +502,7 @@ private fun HeroNextMatchCard(
                         ),
                     )
                     Text(
-                        text = MatchTimeFormatter.formatMonthDayTime(match.utcDate),
+                        text = "北京时间 ${MatchTimeFormatter.formatMonthDayTime(match.utcDate)}",
                         style = MaterialTheme.typography.labelSmall,
                         color = Color.White.copy(alpha = 0.88f),
                     )
@@ -904,7 +933,7 @@ private fun AppleMatchCard(
                             color = InkPrimary,
                         )
                         Text(
-                            text = "本地开球",
+                            text = "北京时间",
                             style = MaterialTheme.typography.labelSmall,
                             color = InkTertiary,
                         )
@@ -1020,6 +1049,8 @@ private fun MatchDetailBottomSheet(
     isWatchlisted: Boolean,
     homeStanding: StandingEntry?,
     awayStanding: StandingEntry?,
+    relatedPlayers: List<StarPlayer>,
+    onClickPlayer: (StarPlayer) -> Unit,
     onToggleFavorite: (String) -> Unit,
     onToggleWatchlist: () -> Unit,
     onAddToSystemCalendar: () -> Unit,
@@ -1028,8 +1059,11 @@ private fun MatchDetailBottomSheet(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+            .fillMaxHeight(0.82f)
+            .verticalScroll(rememberScrollState())
+            .navigationBarsPadding()
+            .padding(horizontal = 20.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1042,7 +1076,7 @@ private fun MatchDetailBottomSheet(
                     color = AppleRed,
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
                 )
             }
             FilterChip(
@@ -1059,28 +1093,37 @@ private fun MatchDetailBottomSheet(
             )
         }
 
+        // Expanded Hero Matchup Card
         Surface(
-            color = AppleCanvas,
-            shape = RoundedCornerShape(18.dp),
+            color = AppleCanvas.copy(alpha = 0.85f),
+            shape = RoundedCornerShape(22.dp),
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
+                    .padding(horizontal = 16.dp, vertical = 22.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(
                     modifier = Modifier.weight(1f),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    TeamCrest(url = match.homeTeamCrest, teamName = match.homeTeamZhName, size = 54.dp)
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(match.homeTeamZhName, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                    TeamCrest(url = match.homeTeamCrest, teamName = match.homeTeamZhName, size = 64.dp)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        match.homeTeamZhName,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        textAlign = TextAlign.Center,
+                        color = InkPrimary,
+                    )
                     if (homeStanding != null) {
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             "第 ${homeStanding.rank} 名 · ${homeStanding.points}分",
                             style = MaterialTheme.typography.labelSmall,
-                            color = InkSecondary,
+                            color = AppleRed,
+                            fontWeight = FontWeight.SemiBold,
                         )
                     }
                 }
@@ -1096,42 +1139,147 @@ private fun MatchDetailBottomSheet(
                             MatchTimeFormatter.formatKickoffTime(match.utcDate)
                         },
                         style = TextStyle(
-                            fontSize = 24.sp,
+                            fontSize = 28.sp,
                             fontWeight = FontWeight.Black,
                             fontFeatureSettings = "tnum",
                         ),
                         color = InkPrimary,
                     )
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = MatchTimeFormatter.formatMonthDayTime(match.utcDate),
+                        text = "北京时间 ${MatchTimeFormatter.formatMonthDayTime(match.utcDate)}",
                         style = MaterialTheme.typography.labelSmall,
                         color = InkSecondary,
+                        textAlign = TextAlign.Center,
                     )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Surface(color = AppleRedTint, shape = RoundedCornerShape(999.dp)) {
+                        Text(
+                            text = MatchTimeFormatter.formatRelativeCountdown(match.utcDate),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = AppleRed,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                        )
+                    }
                 }
 
                 Column(
                     modifier = Modifier.weight(1f),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    TeamCrest(url = match.awayTeamCrest, teamName = match.awayTeamZhName, size = 54.dp)
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(match.awayTeamZhName, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                    TeamCrest(url = match.awayTeamCrest, teamName = match.awayTeamZhName, size = 64.dp)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        match.awayTeamZhName,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        textAlign = TextAlign.Center,
+                        color = InkPrimary,
+                    )
                     if (awayStanding != null) {
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             "第 ${awayStanding.rank} 名 · ${awayStanding.points}分",
                             style = MaterialTheme.typography.labelSmall,
-                            color = InkSecondary,
+                            color = AppleRed,
+                            fontWeight = FontWeight.SemiBold,
                         )
                     }
                 }
             }
         }
 
-        Text(
-            text = "比赛场地：${match.venue.ifBlank { "待公布" }}",
-            style = MaterialTheme.typography.bodyMedium,
-            color = InkSecondary,
-        )
+        // Grouped iOS Info Card
+        Surface(
+            color = AppleCanvas.copy(alpha = 0.85f),
+            shape = RoundedCornerShape(18.dp),
+        ) {
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
+                DetailInfoRow("开球时间", "北京时间 ${MatchTimeFormatter.formatMonthDayTime(match.utcDate)}")
+                HorizontalDivider(color = AppleDivider)
+                DetailInfoRow(
+                    "赛事阶段",
+                    if (match.matchday != null) "${match.competitionZhName} · 第 ${match.matchday} 轮" else match.competitionZhName,
+                )
+                HorizontalDivider(color = AppleDivider)
+                DetailInfoRow("比赛场地", match.venue.ifBlank { "待官方公布" })
+                HorizontalDivider(color = AppleDivider)
+                DetailInfoRow("当前状态", match.status.zhLabel)
+            }
+        }
+
+        // Standings Comparison if available
+        if (homeStanding != null || awayStanding != null) {
+            Surface(
+                color = AppleCanvas.copy(alpha = 0.85f),
+                shape = RoundedCornerShape(18.dp),
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "积分榜实力对比",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = InkPrimary,
+                    )
+                    listOfNotNull(homeStanding, awayStanding).forEach { st ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                TeamCrest(url = st.teamCrest, teamName = st.teamZhName, size = 22.dp)
+                                Text(st.teamZhName, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+                            }
+                            Text(
+                                text = "第${st.rank}名 · ${st.won}胜${st.draw}平${st.lost}负 · 净胜${st.goalDifference} · ${st.points}分",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = InkSecondary,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Related Star Players
+        if (relatedPlayers.isNotEmpty()) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "本场看点球星（点击查看资料）",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = InkPrimary,
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    relatedPlayers.forEach { player ->
+                        Surface(
+                            onClick = { onClickPlayer(player) },
+                            color = AppleCanvas.copy(alpha = 0.85f),
+                            shape = RoundedCornerShape(16.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                PlayerPortrait(url = player.portraitUrl, playerName = player.zhName, size = 36.dp)
+                                Column {
+                                    Text(player.zhName, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
+                                    Text("#${player.shirtNumber} · ${player.positionZh}", style = MaterialTheme.typography.labelSmall, color = InkSecondary)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             val homeFav = match.homeTeamZhName in favoriteTeams
@@ -1162,11 +1310,13 @@ private fun MatchDetailBottomSheet(
             )
         }
 
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(
                 onClick = onAddToSystemCalendar,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = AppleRed),
             ) {
                 Icon(Icons.Filled.EventAvailable, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -1175,15 +1325,31 @@ private fun MatchDetailBottomSheet(
             }
             OutlinedButton(
                 onClick = onShareIcs,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+                shape = RoundedCornerShape(16.dp),
             ) {
                 Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(6.dp))
                 Text("导出标准 .ics 文件分享")
             }
         }
-        Spacer(modifier = Modifier.height(18.dp))
+        Spacer(modifier = Modifier.height(20.dp))
+    }
+}
+
+@Composable
+private fun DetailInfoRow(label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 11.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = MaterialTheme.typography.bodySmall, color = InkSecondary)
+        Text(value, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold, color = InkPrimary)
     }
 }
 

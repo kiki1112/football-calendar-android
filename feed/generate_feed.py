@@ -20,6 +20,7 @@ import pathlib
 import re
 import sys
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -257,6 +258,55 @@ TEAM_ZH_MAP: dict[str, str] = {
     "Olympiacos FC": "奥林匹亚科斯",
     "Inter Miami CF": "迈阿密国际",
     "Al-Nassr FC": "利雅得胜利",
+    "SV 07 Elversberg": "埃尔弗斯贝格",
+    "Elversberg": "埃尔弗斯贝格",
+    "SC Paderborn 07": "帕德博恩",
+    "SC Paderborn": "帕德博恩",
+    "Paderborn": "帕德博恩",
+    "Fortuna Düsseldorf": "杜塞尔多夫",
+    "Karlsruher SC": "卡尔斯鲁厄",
+    "1. FC Kaiserslautern": "凯泽斯劳滕",
+    "Hannover 96": "汉诺威96",
+    "1. FC Nürnberg": "纽伦堡",
+    "Hertha BSC": "柏林赫塔",
+    "SpVgg Greuther Fürth": "菲尔特",
+    "1. FC Magdeburg": "马格德堡",
+    "SV Darmstadt 98": "达姆施塔特",
+    "Real Racing Club de Santander": "桑坦德竞技",
+    "Racing Santander": "桑坦德竞技",
+    "Santander": "桑坦德竞技",
+    "RC Deportivo de La Coruña": "拉科鲁尼亚",
+    "Deportivo La Coruña": "拉科鲁尼亚",
+    "Deportivo": "拉科鲁尼亚",
+    "Málaga CF": "马拉加",
+    "Málaga": "马拉加",
+    "Malaga": "马拉加",
+    "Real Zaragoza": "萨拉戈萨",
+    "Real Sporting de Gijón": "希洪竞技",
+    "Sporting Gijón": "希洪竞技",
+    "Granada CF": "格拉纳达",
+    "Cádiz CF": "加的斯",
+    "UD Almería": "阿尔梅里亚",
+    "SD Eibar": "埃瓦尔",
+    "Sabah FK": "萨巴赫",
+    "Sabah": "萨巴赫",
+    "FK Kairat": "阿拉木图凯拉特",
+    "Pafos FC": "帕福斯",
+    "FK Bodø/Glimt": "博德闪耀",
+    "Royale Union Saint-Gilloise": "圣吉罗斯联合",
+    "Qarabağ FK": "卡拉巴赫",
+    "FC København": "哥本哈根",
+    "FC Midtjylland": "中日德兰",
+    "Malmö FF": "马尔默",
+    "Ferencvárosi TC": "费伦茨瓦罗斯",
+    "ŠK Slovan Bratislava": "布拉迪斯拉发",
+    "FC Viktoria Plzeň": "比尔森胜利",
+    "AZ Alkmaar": "阿尔克马尔",
+    "FC Twente": "特温特",
+    "SC Braga": "布拉加",
+    "Beşiktaş JK": "贝西克塔斯",
+    "KRC Genk": "亨克",
+    "KAA Gent": "根特",
     # National teams
     "France": "法国国家队",
     "Argentina": "阿根廷国家队",
@@ -304,9 +354,11 @@ TEAM_ZH_MAP: dict[str, str] = {
 
 
 def _normalize_team_key(raw: str) -> str:
-    cleaned = raw.lower().replace("&", " ").replace(".", " ").replace("-", " ")
+    decomposed = unicodedata.normalize("NFD", raw)
+    stripped = "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
+    cleaned = stripped.lower().replace("ø", "o").replace("ł", "l").replace("&", " ").replace(".", " ").replace("-", " ")
     cleaned = re.sub(
-        r"\b(fc|cf|afc|kv|bc|sc|sv|sk|fk|ssc|ac|as|us|rc|rcd|cd|ud|ca|ogc|vfl|vfb|tsg|fsv|bsc|gnk|sl)\b",
+        r"\b(fc|cf|afc|kv|bc|sc|sv|sk|fk|ssc|ac|as|us|rc|rcd|cd|ud|ca|ogc|vfl|vfb|tsg|fsv|bsc|gnk|sl|jk|ff|sd|ad|spvgg|04|05|07|96|98|1846|1848|1893|1899|1901|1907|1909|1910|1913|1945)\b",
         " ",
         cleaned,
     )
