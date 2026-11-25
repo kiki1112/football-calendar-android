@@ -21,7 +21,7 @@ private val Context.userPrefsDataStore: DataStore<Preferences> by preferencesDat
 
 data class UserPreferences(
     val dataSourceMode: DataSourceMode = DataSourceMode.DEMO,
-    val githubPagesUrl: String = DEFAULT_GITHUB_PAGES_URL,
+    val githubPagesUrl: String = UserPreferencesRepository.DEFAULT_GITHUB_PAGES_URL,
     val footballDataApiKey: String = "",
     val followedCompetitions: Set<String> = CompetitionCatalog.defaultCodes,
     val favoriteTeams: Set<String> = setOf("阿森纳", "利物浦", "皇家马德里"),
