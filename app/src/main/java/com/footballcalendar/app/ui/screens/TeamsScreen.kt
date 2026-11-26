@@ -110,6 +110,67 @@ fun TeamsScreen(
         mutableStateOf(favTeamsList.firstOrNull() ?: "阿森纳")
     }
 
+    val filteredPlayers = remember(
+        subTab,
+        state.starPlayers,
+        onlyFavPlayers,
+        onlyScorerLeaders,
+        selectedPlayerLeague,
+        playerSearchQuery,
+        state.prefs.favoritePlayers,
+    ) {
+        if (subTab != 0) {
+            emptyList()
+        } else {
+            val q = playerSearchQuery.trim()
+            state.starPlayers.filter { p ->
+                val favOk = !onlyFavPlayers || p.id in state.prefs.favoritePlayers
+                val scorerOk = !onlyScorerLeaders || p.goals > 0 || p.rank > 0
+                val leagueOk = selectedPlayerLeague == null || p.competitionCode == selectedPlayerLeague
+                val queryOk = q.isEmpty() ||
+                    p.zhName.contains(q, ignoreCase = true) ||
+                    p.name.contains(q, ignoreCase = true) ||
+                    p.clubZhName.contains(q, ignoreCase = true) ||
+                    p.clubName.contains(q, ignoreCase = true) ||
+                    p.nationalZhName.contains(q, ignoreCase = true)
+                favOk && scorerOk && leagueOk && queryOk
+            }
+        }
+    }
+
+    val teamsByComp = remember(subTab, state.standingsByLeague, state.allTeams, state.allMatches, teamSearchQuery) {
+        if (subTab != 1) {
+            emptyList()
+        } else {
+            val q = teamSearchQuery.trim()
+            CompetitionCatalog.all.mapNotNull { comp ->
+                val rawMap = buildMap<String, String> {
+                    state.standingsByLeague[comp.code].orEmpty().forEach { s ->
+                        put(s.teamZhName, s.teamName)
+                    }
+                    state.allTeams.filter { it.competitionCode == comp.code }.forEach { t ->
+                        putIfAbsent(t.zhName, t.name)
+                    }
+                    state.allMatches.filter { it.competitionCode == comp.code }.forEach { m ->
+                        putIfAbsent(m.homeTeamZhName, m.homeTeamName)
+                        putIfAbsent(m.awayTeamZhName, m.awayTeamName)
+                    }
+                    if (isEmpty()) {
+                        comp.popularTeams.forEach { pt -> put(pt, pt) }
+                    }
+                }
+                val filteredMap = if (q.isEmpty()) {
+                    rawMap
+                } else {
+                    rawMap.filter { (zh, en) ->
+                        zh.contains(q, ignoreCase = true) || en.contains(q, ignoreCase = true)
+                    }
+                }
+                if (filteredMap.isEmpty()) null else comp to filteredMap
+            }
+        }
+    }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -234,29 +295,6 @@ fun TeamsScreen(
                             }
                         }
                     }
-                }
-            }
-
-            val filteredPlayers = remember(
-                state.starPlayers,
-                onlyFavPlayers,
-                onlyScorerLeaders,
-                selectedPlayerLeague,
-                playerSearchQuery,
-                state.prefs.favoritePlayers,
-            ) {
-                val q = playerSearchQuery.trim()
-                state.starPlayers.filter { p ->
-                    val favOk = !onlyFavPlayers || p.id in state.prefs.favoritePlayers
-                    val scorerOk = !onlyScorerLeaders || p.goals > 0 || p.rank > 0
-                    val leagueOk = selectedPlayerLeague == null || p.competitionCode == selectedPlayerLeague
-                    val queryOk = q.isEmpty() ||
-                        p.zhName.contains(q, ignoreCase = true) ||
-                        p.name.contains(q, ignoreCase = true) ||
-                        p.clubZhName.contains(q, ignoreCase = true) ||
-                        p.clubName.contains(q, ignoreCase = true) ||
-                        p.nationalZhName.contains(q, ignoreCase = true)
-                    favOk && scorerOk && leagueOk && queryOk
                 }
             }
 
@@ -393,35 +431,6 @@ fun TeamsScreen(
             }
 
             // All Teams Catalog grouped lazily by Competition (collapsible to avoid 400+ synchronous chips)
-            val teamsByComp = remember(state.standingsByLeague, state.allTeams, state.allMatches, teamSearchQuery) {
-                val q = teamSearchQuery.trim()
-                CompetitionCatalog.all.mapNotNull { comp ->
-                    val rawMap = buildMap<String, String> {
-                        state.standingsByLeague[comp.code].orEmpty().forEach { s ->
-                            put(s.teamZhName, s.teamName)
-                        }
-                        state.allTeams.filter { it.competitionCode == comp.code }.forEach { t ->
-                            putIfAbsent(t.zhName, t.name)
-                        }
-                        state.allMatches.filter { it.competitionCode == comp.code }.forEach { m ->
-                            putIfAbsent(m.homeTeamZhName, m.homeTeamName)
-                            putIfAbsent(m.awayTeamZhName, m.awayTeamName)
-                        }
-                        if (isEmpty()) {
-                            comp.popularTeams.forEach { pt -> put(pt, pt) }
-                        }
-                    }
-                    val filteredMap = if (q.isEmpty()) {
-                        rawMap
-                    } else {
-                        rawMap.filter { (zh, en) ->
-                            zh.contains(q, ignoreCase = true) || en.contains(q, ignoreCase = true)
-                        }
-                    }
-                    if (filteredMap.isEmpty()) null else comp to filteredMap
-                }
-            }
-
             item {
                 Surface(
                     modifier = Modifier
