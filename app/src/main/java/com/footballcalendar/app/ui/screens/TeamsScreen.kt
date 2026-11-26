@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -327,7 +328,7 @@ fun TeamsScreen(
                 }
             } else {
                 val displayed = filteredPlayers.take(playerDisplayLimit)
-                items(displayed, key = { "${it.id}_${it.clubName}" }) { player ->
+                itemsIndexed(displayed, key = { idx, p -> "${p.id}_${p.clubName}_$idx" }) { _, player ->
                     PlayerRankCard(
                         player = player,
                         isFavorite = player.id in state.prefs.favoritePlayers,
@@ -476,7 +477,7 @@ fun TeamsScreen(
                 }
             }
 
-            items(teamsByComp, key = { (comp, _) -> "team_comp_${comp.code}" }) { (comp, teamsFromMatches) ->
+            itemsIndexed(teamsByComp, key = { idx, (comp, _) -> "team_comp_${comp.code}_$idx" }) { _, (comp, teamsFromMatches) ->
                 val isExpanded = teamSearchQuery.isNotBlank() || comp.code in expandedTeamLeagues
                 Surface(
                     modifier = Modifier
@@ -780,9 +781,10 @@ private fun TeamProfileSummaryCard(
                             .clip(RoundedCornerShape(12.dp))
                             .clickable { onOpenMatch(m) }
                             .padding(vertical = 6.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        TeamCrest(url = m.homeTeamCrest, teamName = m.homeTeamZhName, size = 22.dp)
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = "${m.homeTeamZhName} (${m.homeTeamName}) vs ${m.awayTeamZhName} (${m.awayTeamName})",
@@ -790,11 +792,12 @@ private fun TeamProfileSummaryCard(
                                 fontWeight = FontWeight.SemiBold,
                             )
                             Text(
-                                text = "${m.competitionZhName} · ${MatchTimeFormatter.formatMonthDayTime(m.utcDate)}",
+                                text = "${m.competitionZhName} · 北京时间 ${MatchTimeFormatter.formatMonthDayTime(m.utcDate)}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = InkSecondary,
                             )
                         }
+                        TeamCrest(url = m.awayTeamCrest, teamName = m.awayTeamZhName, size = 22.dp)
                         Text(
                             text = if (m.homeScore != null && m.awayScore != null) {
                                 "${m.homeScore}:${m.awayScore}"
@@ -945,7 +948,7 @@ fun PlayerDetailSheet(
                     if (filteredSubList.isEmpty()) {
                         item { Text("当前筛选条件下暂无赛事记录", style = MaterialTheme.typography.bodySmall, color = InkTertiary) }
                     } else {
-                        items(filteredSubList, key = { "sub_${subPageMode}_${it.id}" }) { m ->
+                        itemsIndexed(filteredSubList, key = { idx, m -> "sub_${subPageMode}_${m.id}_$idx" }) { _, m ->
                             PlayerMatchRowCard(match = m, onClick = { onClickMatch(m) })
                         }
                     }
@@ -1067,7 +1070,7 @@ fun PlayerDetailSheet(
                             Text("近期暂无已排期即将赛程，可点击上方俱乐部查看详情", style = MaterialTheme.typography.bodySmall, color = InkTertiary)
                         }
                     } else {
-                        items(upcomingList.take(3), key = { "up_p_${it.id}" }) { m ->
+                        itemsIndexed(upcomingList.take(3), key = { idx, m -> "up_p_${m.id}_$idx" }) { _, m ->
                             PlayerMatchRowCard(match = m, onClick = { onClickMatch(m) })
                         }
                         if (upcomingList.size > 3) {
@@ -1119,7 +1122,7 @@ fun PlayerDetailSheet(
                             Text("暂无该球员关联球队近期已完赛记录", style = MaterialTheme.typography.bodySmall, color = InkTertiary)
                         }
                     } else {
-                        items(finishedList.take(3), key = { "fin_p_${it.id}" }) { m ->
+                        itemsIndexed(finishedList.take(3), key = { idx, m -> "fin_p_${m.id}_$idx" }) { _, m ->
                             PlayerMatchRowCard(match = m, onClick = { onClickMatch(m) })
                         }
                         if (finishedList.size > 3) {

@@ -41,11 +41,13 @@ class AppContainer(application: Application) {
     }
 
     private val okHttpClient: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(12, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(38, TimeUnit.SECONDS)
+        .writeTimeout(15, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
         .addInterceptor { chain ->
             val req = chain.request().newBuilder()
-                .header("User-Agent", "FootballCalendarApp/2.4 (https://github.com/kiki1112/football-calendar-android)")
+                .header("User-Agent", "FootballCalendarApp/2.6 (https://github.com/kiki1112/football-calendar-android)")
                 .build()
             chain.proceed(req)
         }

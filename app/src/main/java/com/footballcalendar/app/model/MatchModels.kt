@@ -223,6 +223,7 @@ data class TeamDetailInfo(
     val squad: List<SquadMember>,
     val espnTeamId: String = "",
     val espnSlug: String = "",
+    val coachPortraitUrl: String = "",
 )
 
 data class MatchH2HBundle(
@@ -251,6 +252,20 @@ data class LineupPlayerItem(
     val number: Int,
     val pos: String,
     val portraitUrl: String = "",
+    val formationPlace: Int = 0,
+    val goals: Int = 0,
+    val assists: Int = 0,
+    val yellowCards: Int = 0,
+    val redCards: Int = 0,
+    val shots: Int = 0,
+    val shotsOnTarget: Int = 0,
+    val passes: Int = 0,
+    val tackles: Int = 0,
+    val saves: Int = 0,
+    val foulsCommitted: Int = 0,
+    val subbedIn: Boolean = false,
+    val subbedOut: Boolean = false,
+    val rating: String = "",
 )
 
 data class MatchLineupSide(
@@ -261,12 +276,14 @@ data class MatchLineupSide(
     val coachZhName: String,
     val startXI: List<LineupPlayerItem>,
     val substitutes: List<LineupPlayerItem>,
+    val coachPortraitUrl: String = "",
 )
 
 data class MatchStatPair(
     val labelZh: String,
     val homeValue: String,
     val awayValue: String,
+    val group: String = "综合",
 )
 
 data class MatchCommentaryItem(
@@ -293,6 +310,11 @@ data class LiveMatchDetail(
     val stats: List<MatchStatPair>,
     val syncedAtMillis: Long,
     val commentary: List<MatchCommentaryItem> = emptyList(),
+    val venueName: String = "",
+    val attendance: Int = 0,
+    val refereeName: String = "",
+    val weatherText: String = "",
+    val temperatureText: String = "",
 )
 
 data class LiveBroadcastAlert(

@@ -145,6 +145,9 @@ class FixtureRepository(
                 if (td.espnTeamId.isNotBlank() && td.espnSlug.isNotBlank()) {
                     indexEspnTeamRef(td.name, td.zhName, td.espnSlug, td.espnTeamId)
                 }
+                if (td.coachName.isNotBlank() && td.coachPortraitUrl.isNotBlank()) {
+                    wikiPortraitCache.putIfAbsent(td.coachName.lowercase(), td.coachPortraitUrl)
+                }
                 td.squad.forEach { sq ->
                     if (sq.portraitUrl.isNotBlank()) {
                         wikiPortraitCache.putIfAbsent(sq.name.lowercase(), sq.portraitUrl)
@@ -211,6 +214,9 @@ class FixtureRepository(
                     if (td.espnTeamId.isNotBlank() && td.espnSlug.isNotBlank()) {
                         indexEspnTeamRef(td.name, td.zhName, td.espnSlug, td.espnTeamId)
                     }
+                    if (td.coachName.isNotBlank() && td.coachPortraitUrl.isNotBlank()) {
+                        wikiPortraitCache[td.coachName.lowercase()] = td.coachPortraitUrl
+                    }
                     td.squad.forEach { sq ->
                         if (sq.portraitUrl.isNotBlank()) {
                             wikiPortraitCache[sq.name.lowercase()] = sq.portraitUrl
@@ -271,14 +277,44 @@ class FixtureRepository(
             }
             val changedItems = mutableListOf<MatchItem>()
 
-            // 1. Free ESPN global live scoreboard (0 quota, fast real-time updates)
-            runCatching {
-                val espnResp = apiService.fetchEspnScoreboard(
+            // 1. Free ESPN global live scoreboard (0 quota, fast real-time updates) + host fallback
+            val espnResp = runCatching {
+                apiService.fetchEspnScoreboard(
                     "https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard",
                 )
-                val espnItems = espnResp.events.mapNotNull { it.toMatchItem() }
-                for (live in espnItems) {
-                    applyLiveUpdate(live, existing, prefs.followedCompetitions, changedItems)
+            }.getOrNull() ?: runCatching {
+                apiService.fetchEspnScoreboard(
+                    "https://site.web.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard",
+                )
+            }.getOrNull()
+            espnResp?.events?.mapNotNull { it.toMatchItem(allowUnmappedComp = true) }?.forEach { live ->
+                applyLiveUpdate(live, existing, prefs.followedCompetitions, changedItems)
+            }
+
+            // 1b. Also check active league-specific scoreboards in the live window (max 4 leagues in parallel)
+            val nowUtc = Instant.now()
+            val activeSlugs = existing.filter { m ->
+                m.status.isLive || MatchTimeFormatter.parseInstant(m.utcDate)?.let { ko ->
+                    Duration.between(ko, nowUtc).toMinutes() in -20..180
+                } == true
+            }.mapNotNull { m -> m.espnSlug ?: EspnLeagueCatalog.slugForCode(m.competitionCode) }
+                .distinct()
+                .take(4)
+            if (activeSlugs.isNotEmpty()) {
+                coroutineScope {
+                    activeSlugs.map { slug ->
+                        async {
+                            runCatching {
+                                apiService.fetchEspnScoreboard(
+                                    "https://site.api.espn.com/apis/site/v2/sports/soccer/$slug/scoreboard",
+                                ).events.mapNotNull { it.toMatchItem(fallbackSlug = slug) }
+                            }.getOrDefault(emptyList())
+                        }
+                    }.forEach { def ->
+                        def.await().forEach { live ->
+                            applyLiveUpdate(live, existing, prefs.followedCompetitions, changedItems)
+                        }
+                    }
                 }
             }
 
@@ -388,9 +424,8 @@ class FixtureRepository(
             (live.espnEventId != null && it.espnEventId == live.espnEventId) ||
                 (live.apiFootballFixtureId != null && it.apiFootballFixtureId == live.apiFootballFixtureId) ||
                 it.id == live.id ||
-                (it.competitionCode == live.competitionCode &&
-                    it.homeTeamZhName == live.homeTeamZhName &&
-                    it.awayTeamZhName == live.awayTeamZhName)
+                ((live.competitionCode == "OTHER" || it.competitionCode == live.competitionCode) &&
+                    matchesSamePair(it, live))
         }
         if (idx >= 0) {
             val cur = existing[idx]
@@ -398,8 +433,8 @@ class FixtureRepository(
             val newH = live.homeScore ?: cur.homeScore
             val newA = live.awayScore ?: cur.awayScore
             val newElapsed = live.elapsedMinutes ?: cur.elapsedMinutes
-            val newEspnSlug = live.espnSlug ?: cur.espnSlug
-            val newEspnEventId = live.espnEventId ?: cur.espnEventId
+            val newEspnSlug = live.espnSlug?.takeIf { it.isNotBlank() } ?: cur.espnSlug
+            val newEspnEventId = live.espnEventId?.takeIf { it.isNotBlank() } ?: cur.espnEventId
             val newAfId = live.apiFootballFixtureId ?: cur.apiFootballFixtureId
             if (newStatus != cur.status || newH != cur.homeScore || newA != cur.awayScore ||
                 newElapsed != cur.elapsedMinutes || newEspnSlug != cur.espnSlug ||
@@ -418,7 +453,7 @@ class FixtureRepository(
                 existing[idx] = updated
                 changedOut += updated
             }
-        } else if (live.competitionCode in followedCodes && (live.status.isLive || live.status == MatchStatus.FINISHED)) {
+        } else if (live.competitionCode != "OTHER" && live.competitionCode in followedCodes && (live.status.isLive || live.status == MatchStatus.FINISHED)) {
             existing += live
             changedOut += live
         }
@@ -446,22 +481,30 @@ class FixtureRepository(
                 val utcDate = MatchTimeFormatter.parseInstant(match.utcDate)
                     ?.atZone(ZoneOffset.UTC)
                     ?.toLocalDate()
-                if (targetSlug != null && utcDate != null) {
+                if (utcDate != null) {
                     val dateCandidates = listOf(
                         DateTimeFormatter.BASIC_ISO_DATE.format(utcDate),
                         DateTimeFormatter.BASIC_ISO_DATE.format(utcDate.minusDays(1)),
                     )
+                    val querySlug = targetSlug ?: "all"
                     for (ds in dateCandidates) {
                         val sb = runCatching {
                             apiService.fetchEspnScoreboard(
-                                "https://site.api.espn.com/apis/site/v2/sports/soccer/$targetSlug/scoreboard?dates=$ds",
+                                "https://site.api.espn.com/apis/site/v2/sports/soccer/$querySlug/scoreboard?dates=$ds",
+                            )
+                        }.getOrNull() ?: runCatching {
+                            apiService.fetchEspnScoreboard(
+                                "https://site.web.api.espn.com/apis/site/v2/sports/soccer/$querySlug/scoreboard?dates=$ds",
                             )
                         }.getOrNull()
-                        val matched = sb?.events?.mapNotNull { it.toMatchItem(targetSlug) }?.firstOrNull { em ->
-                            matchesSamePair(em, match)
-                        }
+                        val matched = sb?.events?.mapNotNull {
+                            it.toMatchItem(fallbackSlug = targetSlug.orEmpty(), allowUnmappedComp = true)
+                        }?.firstOrNull { em -> matchesSamePair(em, match) }
                         if (matched?.espnEventId != null) {
                             targetEventId = matched.espnEventId
+                            if (targetSlug.isNullOrBlank() && !matched.espnSlug.isNullOrBlank()) {
+                                targetSlug = matched.espnSlug
+                            }
                             break
                         }
                     }
@@ -490,6 +533,11 @@ class FixtureRepository(
                         "https://site.api.espn.com/apis/site/v2/sports/soccer/$targetSlug/summary?event=$targetEventId",
                     )
                     sm.toLiveDetail(match.id, targetEventId)
+                }.getOrNull() ?: runCatching {
+                    val sm = apiService.fetchEspnSummary(
+                        "https://site.web.api.espn.com/apis/site/v2/sports/soccer/$targetSlug/summary?event=$targetEventId",
+                    )
+                    sm.toLiveDetail(match.id, targetEventId)
                 }.getOrNull()
                 if (rawEspnDetail != null) {
                     val espnDetail = enrichDetailLineupPortraits(rawEspnDetail)
@@ -499,13 +547,15 @@ class FixtureRepository(
                 }
             }
 
-            // 2. Fallback to API-Football (e.g. J2 / K League 1 / U20 Asian Cup)
-            if (cached != null && (nowMs - cached.syncedAtMillis) < 45_000L) {
+            // Never wipe out an existing cached live detail if live polling fails transiently
+            if (cached != null) {
                 return@runCatching cached
             }
+
+            // 2. Fallback to API-Football (e.g. J2 / K League 1 / U20 Asian Cup)
             val prefs = prefsRepo.currentPreferences()
             val afKey = prefs.effectiveApiFootballKey()
-            require(afKey.isNotEmpty()) { "该赛事暂不支持细节回放" }
+            require(afKey.isNotEmpty()) { "实时赛况网络超时，请点击右上角或下拉刷新重试" }
 
             var targetFixtureId = match.apiFootballFixtureId
                 ?: match.id.removePrefix("af-").toIntOrNull()
@@ -516,11 +566,13 @@ class FixtureRepository(
                     ?.toLocalDate()
                     ?.toString()
                 if (utcDateStr != null) {
-                    val dayResp = apiService.fetchApiFootballFixtures(
-                        url = "https://v3.football.api-sports.io/fixtures?date=$utcDateStr",
-                        apiKey = afKey,
-                    )
-                    targetFixtureId = dayResp.response.firstOrNull { row ->
+                    val dayResp = runCatching {
+                        apiService.fetchApiFootballFixtures(
+                            url = "https://v3.football.api-sports.io/fixtures?date=$utcDateStr",
+                            apiKey = afKey,
+                        )
+                    }.getOrNull()
+                    targetFixtureId = dayResp?.response?.firstOrNull { row ->
                         TeamLocalization.localizeTeam(row.teams.home.name) == match.homeTeamZhName &&
                             TeamLocalization.localizeTeam(row.teams.away.name) == match.awayTeamZhName
                     }?.fixture?.id
@@ -528,7 +580,7 @@ class FixtureRepository(
             }
 
             require(targetFixtureId != null && targetFixtureId > 0) {
-                "比赛未开赛或暂无实时事件记录"
+                "实时赛况连接暂时受阻，或比赛尚未开赛（可稍候下拉刷新赛程获取预缓存详情）"
             }
 
             val detailResp = apiService.fetchApiFootballFixtures(
@@ -729,12 +781,15 @@ class FixtureRepository(
         if (cleaned.isBlank()) return "" to ""
         val searchUrl = "https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=" +
             URLEncoder.encode("$cleaned footballer", "UTF-8") +
-            "&gsrlimit=1&prop=pageimages&pithumbsize=300&format=json"
-        val searchTitle = runCatching {
-            apiService.fetchWikipediaPageImages(searchUrl).query?.pages?.values?.firstOrNull()
-        }.getOrNull()
-        val resolvedTitle = searchTitle?.title?.ifBlank { cleaned } ?: cleaned
-        var portrait = searchTitle?.thumbnail?.source.orEmpty()
+            "&gsrlimit=4&prop=pageimages&pithumbsize=300&format=json"
+        val pages = runCatching {
+            apiService.fetchWikipediaPageImages(searchUrl).query?.pages?.values.orEmpty()
+        }.getOrDefault(emptyList())
+        val bestPage = pages.firstOrNull {
+            !it.thumbnail?.source.isNullOrBlank() && !it.title.contains("disambiguation", true)
+        } ?: pages.firstOrNull { !it.title.contains("disambiguation", true) } ?: pages.firstOrNull()
+        val resolvedTitle = bestPage?.title?.ifBlank { cleaned } ?: cleaned
+        var portrait = bestPage?.thumbnail?.source.orEmpty()
 
         val encodedEn = URLEncoder.encode(resolvedTitle.replace(' ', '_'), "UTF-8")
         val enSum = runCatching {
@@ -848,11 +903,13 @@ class FixtureRepository(
     }
 
     private suspend fun enrichTeamSquadPortraits(team: TeamDetailInfo): TeamDetailInfo {
-        if (team.squad.isEmpty()) return team
-        val missing = team.squad.filter { it.portraitUrl.isBlank() && it.name.isNotBlank() }.map { it.name }
-        if (missing.isEmpty()) return team
-        val resolved = enrichWikipediaPortraitsBatch(missing)
-        if (resolved.isEmpty()) return team
+        val missingSquad = team.squad.filter { it.portraitUrl.isBlank() && it.name.isNotBlank() }.map { it.name }
+        val needCoach = team.coachName.isNotBlank() && team.coachPortraitUrl.isBlank()
+        val queryNames = (missingSquad + listOfNotNull(team.coachName.takeIf { needCoach })).distinct()
+        val resolved = if (queryNames.isNotEmpty()) enrichWikipediaPortraitsBatch(queryNames) else emptyMap()
+        val resolvedCoachPhoto = team.coachPortraitUrl.ifBlank {
+            resolved[team.coachName] ?: wikiPortraitCache[team.coachName.lowercase()].orEmpty()
+        }
         val updatedSquad = team.squad.map { sq ->
             if (sq.portraitUrl.isBlank()) {
                 val hit = resolved[sq.name] ?: wikiPortraitCache[sq.name.lowercase()]
@@ -861,20 +918,47 @@ class FixtureRepository(
                 sq
             }
         }
-        val updatedTeam = team.copy(squad = updatedSquad)
-        runCatching { teamDao.upsertAll(listOf(TeamEntity.fromDomain(updatedTeam, json))) }
+        val updatedTeam = team.copy(squad = updatedSquad, coachPortraitUrl = resolvedCoachPhoto)
+        if (updatedTeam != team) {
+            runCatching { teamDao.upsertAll(listOf(TeamEntity.fromDomain(updatedTeam, json))) }
+        }
         return updatedTeam
     }
 
     private suspend fun enrichDetailLineupPortraits(detail: LiveMatchDetail): LiveMatchDetail {
         if (detail.lineups.isEmpty()) return detail
-        val allNames = detail.lineups.flatMap { side ->
-            (side.startXI + side.substitutes).map { it.name }.filter { it.isNotBlank() }
+        val storedTeams = runCatching { teamDao.getAllTeamsOnce().map { it.toDomain(json) } }.getOrDefault(emptyList())
+        storedTeams.forEach { t ->
+            t.squad.forEach { sq ->
+                if (sq.portraitUrl.isNotBlank()) wikiPortraitCache.putIfAbsent(sq.name.lowercase(), sq.portraitUrl)
+            }
+            if (t.coachName.isNotBlank() && t.coachPortraitUrl.isNotBlank()) {
+                wikiPortraitCache.putIfAbsent(t.coachName.lowercase(), t.coachPortraitUrl)
+            }
+        }
+        val allNames = buildList {
+            detail.lineups.forEach { side ->
+                (side.startXI + side.substitutes).forEach { if (it.name.isNotBlank()) add(it.name) }
+                val matchedTeam = findMatchingTeam(storedTeams, side.teamName, side.teamZhName)
+                val coachEn = side.coachName.ifBlank { matchedTeam?.coachName.orEmpty() }
+                if (coachEn.isNotBlank()) add(coachEn)
+            }
         }.distinct()
         val resolved = enrichWikipediaPortraitsBatch(allNames)
         return detail.copy(
             lineups = detail.lineups.map { side ->
+                val matchedTeam = findMatchingTeam(storedTeams, side.teamName, side.teamZhName)
+                val coachEn = side.coachName.ifBlank { matchedTeam?.coachName.orEmpty() }
+                val coachZh = side.coachZhName.ifBlank { matchedTeam?.coachZhName?.ifBlank { TeamLocalization.localizeCoach(coachEn) }.orEmpty() }
+                val coachPhoto = side.coachPortraitUrl.ifBlank {
+                    matchedTeam?.coachPortraitUrl.orEmpty().ifBlank {
+                        resolved[coachEn] ?: wikiPortraitCache[coachEn.lowercase()].orEmpty()
+                    }
+                }
                 side.copy(
+                    coachName = coachEn,
+                    coachZhName = coachZh,
+                    coachPortraitUrl = coachPhoto,
                     startXI = side.startXI.map { p ->
                         p.copy(portraitUrl = p.portraitUrl.ifBlank { resolved[p.name] ?: wikiPortraitCache[p.name.lowercase()] ?: "" })
                     },
@@ -943,10 +1027,13 @@ class FixtureRepository(
                     async {
                         val sUrl = "https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=" +
                             URLEncoder.encode("$rawName footballer", "UTF-8") +
-                            "&gsrlimit=1&prop=pageimages&pithumbsize=300&format=json"
-                        val thumb = runCatching {
-                            apiService.fetchWikipediaPageImages(sUrl).query?.pages?.values?.firstOrNull()?.thumbnail?.source
-                        }.getOrNull()
+                            "&gsrlimit=4&prop=pageimages&pithumbsize=300&format=json"
+                        val pages = runCatching {
+                            apiService.fetchWikipediaPageImages(sUrl).query?.pages?.values.orEmpty()
+                        }.getOrDefault(emptyList())
+                        val thumb = pages.firstOrNull {
+                            !it.thumbnail?.source.isNullOrBlank() && !it.title.contains("disambiguation", true)
+                        }?.thumbnail?.source
                         if (!thumb.isNullOrBlank()) {
                             wikiPortraitCache[rawName.lowercase()] = thumb
                             rawName to thumb

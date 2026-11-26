@@ -76,8 +76,32 @@ ESPN_SLUG_BY_CODE: dict[str, str] = {
     "U17WC": "fifa.world.u17",
 }
 ESPN_CODE_BY_SLUG: dict[str, str] = {v: k for k, v in ESPN_SLUG_BY_CODE.items()}
+ESPN_UID_TO_SLUG: dict[str, str] = {
+    "700": "eng.1",
+    "740": "esp.1",
+    "720": "ger.1",
+    "730": "ita.1",
+    "710": "fra.1",
+    "775": "uefa.champions",
+    "776": "uefa.europa",
+    "20296": "uefa.europa.conf",
+    "3902": "afc.champions",
+    "750": "jpn.1",
+    "3906": "aus.1",
+    "770": "usa.1",
+    "3914": "eng.2",
+    "725": "ned.1",
+    "715": "por.1",
+    "630": "bra.1",
+    "783": "conmebol.libertadores",
+    "606": "fifa.world",
+    "781": "uefa.euro",
+    "2395": "uefa.nations",
+    "5697": "fifa.world.u17",
+}
 ESPN_STANDINGS_CODES = ["UEL", "UECL", "ACL", "J1", "AL", "MLS"]
 ESPN_ROSTER_CODES = ["UEL", "UECL", "ACL", "J1", "AL", "MLS", "WC", "EC", "UNL"]
+PORTRAIT_CACHE_PATH = pathlib.Path(__file__).resolve().parent / "portrait_cache.json"
 
 COMPETITION_META: dict[str, dict[str, str]] = {
     "PL": {"name": "Premier League", "zhName": "英超", "country": "英格兰", "color": "#E11D48"},
@@ -1402,11 +1426,13 @@ def _fetch_af_team_detail(api_key: str, team_id: int, comp_code: str, fallback_n
     except Exception:  # noqa: BLE001
         pass
 
+    coach_portrait = ""
     try:
         c_resp = fetch_json(f"https://v3.football.api-sports.io/coachs?team={team_id}", {"x-apisports-key": api_key})
         c_rows = c_resp.get("response") or []
         if c_rows:
             coach_name = c_rows[0].get("name") or ""
+            coach_portrait = (c_rows[0].get("photo") or "").strip()
     except Exception:  # noqa: BLE001
         pass
 
@@ -1452,6 +1478,7 @@ def _fetch_af_team_detail(api_key: str, team_id: int, comp_code: str, fallback_n
         "coachName": coach_name,
         "coachZhName": coach_zh,
         "coachNationality": "",
+        "coachPortraitUrl": coach_portrait,
         "squad": squad_rows,
     }
 
@@ -1514,23 +1541,49 @@ def _merge_espn_match(
         collected[nm.id] = nm
 
 
+def _infer_espn_slug(ev: dict[str, Any], fallback_slug: str = "") -> str:
+    slug = (fallback_slug or "").strip()
+    if slug:
+        return slug
+    slug = ((ev.get("league") or {}).get("slug") or "").strip()
+    if slug:
+        return slug
+    uid = str(ev.get("uid") or "")
+    m = re.search(r"~l:(\d+)~", uid)
+    if m and m.group(1) in ESPN_UID_TO_SLUG:
+        return ESPN_UID_TO_SLUG[m.group(1)]
+    for lnk in ev.get("links") or []:
+        href = lnk.get("href") or ""
+        for s in ESPN_CODE_BY_SLUG:
+            if f"/{s}/" in href:
+                return s
+    s_slug = ((ev.get("season") or {}).get("slug") or "").lower()
+    if "english-premier-league" in s_slug:
+        return "eng.1"
+    if "spanish-laliga" in s_slug or "laliga" in s_slug:
+        return "esp.1"
+    if "german-bundesliga" in s_slug:
+        return "ger.1"
+    if "italian-serie-a" in s_slug:
+        return "ita.1"
+    if "french-ligue-1" in s_slug:
+        return "fra.1"
+    if "champions-league" in s_slug and "afc" not in s_slug:
+        return "uefa.champions"
+    if "europa-league" in s_slug:
+        return "uefa.europa"
+    if "conference-league" in s_slug:
+        return "uefa.europa.conf"
+    if "u-17" in s_slug or "u17" in s_slug:
+        return "fifa.world.u17"
+    return ""
+
+
 def normalize_espn_event(ev: dict[str, Any], fallback_slug: str = "") -> NormalizedMatch | None:
     eid = str(ev.get("id") or "").strip()
     if not eid:
         return None
-    slug = (fallback_slug or "").strip()
-    if not slug:
-        slug = ((ev.get("league") or {}).get("slug") or "").strip()
-    if not slug:
-        # Try deriving from league links if present inside event
-        for lnk in ev.get("links") or []:
-            href = lnk.get("href") or ""
-            for s in ESPN_CODE_BY_SLUG:
-                if f"/{s}/" in href:
-                    slug = s
-                    break
-            if slug:
-                break
+    slug = _infer_espn_slug(ev, fallback_slug)
     code = ESPN_CODE_BY_SLUG.get(slug)
     if not code:
         return None
@@ -1808,7 +1861,7 @@ def _fetch_enwiki_search_portrait(name: str) -> tuple[str, str]:
             "action": "query",
             "generator": "search",
             "gsrsearch": f"{name} footballer",
-            "gsrlimit": "1",
+            "gsrlimit": "4",
             "prop": "pageimages",
             "pithumbsize": "300",
             "format": "json",
@@ -1820,7 +1873,12 @@ def _fetch_enwiki_search_portrait(name: str) -> tuple[str, str]:
             {"User-Agent": "FootballCalendarSync/6.0 (https://github.com/kiki1112/football-calendar-android)"},
             timeout_seconds=8,
         )
-        for page in ((payload.get("query") or {}).get("pages") or {}).values():
+        pages = list(((payload.get("query") or {}).get("pages") or {}).values())
+        pages.sort(key=lambda pg: pg.get("index", 99))
+        for page in pages:
+            title = (page.get("title") or "").lower()
+            if "(disambiguation)" in title:
+                continue
             src = ((page.get("thumbnail") or {}).get("source") or "").strip()
             if src:
                 return name, src
@@ -1893,8 +1951,9 @@ def enrich_missing_portraits(
     teams: list[dict[str, Any]],
     players: list[dict[str, Any]],
     max_batches: int = 400,
-) -> None:
-    """Resolve real-person Wikipedia + Wikidata SPARQL thumbnails for squads & ranked players."""
+    search_cap: int = 450,
+) -> dict[str, str]:
+    """Resolve real-person Wikipedia + Wikidata SPARQL thumbnails for squads, coaches & ranked players."""
     missing_names: list[str] = []
     seen: set[str] = set()
     for p in players:
@@ -1903,6 +1962,10 @@ def enrich_missing_portraits(
             seen.add(nm)
             missing_names.append(nm)
     for td in teams:
+        cname = (td.get("coachName") or "").strip()
+        if cname and not td.get("coachPortraitUrl") and cname not in seen:
+            seen.add(cname)
+            missing_names.append(cname)
         for sq in td.get("squad") or []:
             nm = (sq.get("name") or "").strip()
             if nm and not sq.get("portraitUrl") and nm not in seen:
@@ -1910,7 +1973,7 @@ def enrich_missing_portraits(
                 missing_names.append(nm)
 
     if not missing_names:
-        return
+        return {}
 
     chunks = [missing_names[i : i + 45] for i in range(0, min(len(missing_names), max_batches * 45), 45)]
     resolved: dict[str, str] = {}
@@ -1942,8 +2005,8 @@ def enrich_missing_portraits(
                 if res:
                     resolved.update(res)
 
-    # Stage 4: Fuzzy Wikipedia footballer search for remaining hyphenated / alternative names
-    search_targets = [nm for nm in missing_names if nm not in resolved][:260]
+    # Stage 4: Fuzzy Wikipedia footballer search for remaining hyphenated / mononym names (e.g. Cucurella, Dewsbury-Hall)
+    search_targets = [nm for nm in missing_names if nm not in resolved][:search_cap]
     if search_targets:
         with ThreadPoolExecutor(max_workers=6) as pool:
             for nm, src in pool.map(_fetch_enwiki_search_portrait, search_targets):
@@ -1951,7 +2014,7 @@ def enrich_missing_portraits(
                     resolved[nm] = src
 
     if not resolved:
-        return
+        return {}
 
     for p in players:
         if not p.get("portraitUrl"):
@@ -1959,11 +2022,15 @@ def enrich_missing_portraits(
             if nm in resolved:
                 p["portraitUrl"] = resolved[nm]
     for td in teams:
+        cname = (td.get("coachName") or "").strip()
+        if cname and not td.get("coachPortraitUrl") and cname in resolved:
+            td["coachPortraitUrl"] = resolved[cname]
         for sq in td.get("squad") or []:
             if not sq.get("portraitUrl"):
                 nm = (sq.get("name") or "").strip()
                 if nm in resolved:
                     sq["portraitUrl"] = resolved[nm]
+    return resolved
 
 
 def _translate_espn_commentary(raw_text: str, type_key: str, team_zh: str, p1: str, p2: str) -> str:
@@ -2164,21 +2231,39 @@ def fetch_espn_summary_detail(match_id: str, slug: str, event_id: str) -> dict[s
         starters = []
         subs = []
         for item in roster_list:
-            pn = ((item.get("athlete") or {}).get("displayName") or "").strip()
+            ath = item.get("athlete") or {}
+            pn = (ath.get("displayName") or "").strip()
             if not pn:
                 continue
             j = str(item.get("jersey") or "")
             pos = ((item.get("position") or {}).get("abbreviation") or "")
+            fp_raw = str(item.get("formationPlace") or "")
+            st_map = {s.get("name"): int(round(float(s.get("value") or 0))) for s in (item.get("stats") or []) if s.get("name")}
             slot = {
                 "name": pn,
                 "zhName": localize_player(pn)[0],
                 "number": int(j) if j.isdigit() else 0,
                 "pos": pos,
+                "portraitUrl": ((ath.get("headshot") or {}).get("href") or "").strip(),
+                "formationPlace": int(fp_raw) if fp_raw.isdigit() else 0,
+                "goals": st_map.get("totalGoals", 0),
+                "assists": st_map.get("goalAssists", 0),
+                "yellowCards": st_map.get("yellowCards", 0),
+                "redCards": st_map.get("redCards", 0),
+                "shots": st_map.get("totalShots", 0),
+                "shotsOnTarget": st_map.get("shotsOnTarget", 0),
+                "passes": st_map.get("totalPasses", 0),
+                "tackles": st_map.get("effectiveTackles") or st_map.get("totalTackles", 0),
+                "saves": st_map.get("saves", 0),
+                "foulsCommitted": st_map.get("foulsCommitted", 0),
+                "subbedIn": bool(item.get("subbedIn")),
+                "subbedOut": bool(item.get("subbedOut")),
             }
             if item.get("starter"):
                 starters.append(slot)
             else:
                 subs.append(slot)
+        starters.sort(key=lambda s: (s["formationPlace"] if s["formationPlace"] > 0 else 99, s["number"]))
         lineups.append(
             {
                 "teamName": t_name,
@@ -2186,6 +2271,7 @@ def fetch_espn_summary_detail(match_id: str, slug: str, event_id: str) -> dict[s
                 "formation": r.get("formation") or "",
                 "coachName": "",
                 "coachZhName": "",
+                "coachPortraitUrl": "",
                 "startXI": starters,
                 "substitutes": subs,
             }
@@ -2198,33 +2284,49 @@ def fetch_espn_summary_detail(match_id: str, slug: str, event_id: str) -> dict[s
         am = {s.get("name"): str(s.get("displayValue") or "") for s in (box_teams[1].get("statistics") or [])}
         if box_teams[0].get("team", {}).get("displayName") != home_name and box_teams[1].get("team", {}).get("displayName") == home_name:
             hm, am = am, hm
-        for raw_k, zh_label in (
-            ("possessionPct", "控球率"),
-            ("totalShots", "射门次数"),
-            ("shotsOnTarget", "射正次数"),
-            ("wonCorners", "角球"),
-            ("passPct", "传球成功率"),
-            ("foulsCommitted", "犯规"),
-            ("yellowCards", "黄牌"),
-            ("offsides", "越位"),
+        for raw_k, zh_label, grp in (
+            ("possessionPct", "控球率", "关键"),
+            ("totalShots", "射门次数", "进攻"),
+            ("shotsOnTarget", "射正次数", "进攻"),
+            ("blockedShots", "射门被封堵", "进攻"),
+            ("shotPct", "射门命中率", "进攻"),
+            ("wonCorners", "角球", "进攻"),
+            ("offsides", "越位", "进攻"),
+            ("penaltyKickGoals", "点球得分", "进攻"),
+            ("accuratePasses", "精准传球", "传球"),
+            ("totalPasses", "传球总数", "传球"),
+            ("passPct", "传球成功率", "传球"),
+            ("crossPct", "传中成功率", "传球"),
+            ("longballPct", "长传成功率", "传球"),
+            ("effectiveTackles", "成功抢断", "防守"),
+            ("totalTackles", "总抢断次数", "防守"),
+            ("tacklePct", "抢断成功率", "防守"),
+            ("effectiveClearance", "有效解围", "防守"),
+            ("totalClearance", "总解围次数", "防守"),
+            ("saves", "门将扑救", "防守"),
+            ("foulsCommitted", "犯规", "防守"),
+            ("yellowCards", "黄牌", "防守"),
+            ("redCards", "红牌", "防守"),
         ):
             hv, av = hm.get(raw_k), am.get(raw_k)
             if hv is not None and av is not None:
                 if raw_k == "possessionPct":
-                    hv, av = f"{hv}%", f"{av}%"
-                elif raw_k == "passPct":
+                    hv = hv if hv.endswith("%") else f"{hv}%"
+                    av = av if av.endswith("%") else f"{av}%"
+                elif raw_k in {"passPct", "crossPct", "longballPct", "tacklePct", "shotPct"}:
                     try:
-                        if float(hv) <= 1.0:
-                            hv = f"{round(float(hv) * 100)}%"
-                        else:
-                            hv = f"{hv}%"
-                        if float(av) <= 1.0:
-                            av = f"{round(float(av) * 100)}%"
-                        else:
-                            av = f"{av}%"
+                        hv_f, av_f = float(hv.rstrip("%")), float(av.rstrip("%"))
+                        hv = f"{round(hv_f * 100)}%" if (hv_f <= 1.0 and not hv.endswith("%")) else f"{round(hv_f)}%"
+                        av = f"{round(av_f * 100)}%" if (av_f <= 1.0 and not av.endswith("%")) else f"{round(av_f)}%"
                     except ValueError:
                         pass
-                stats_pairs.append({"labelZh": zh_label, "homeValue": hv, "awayValue": av})
+                stats_pairs.append({"labelZh": zh_label, "homeValue": hv, "awayValue": av, "group": grp})
+
+    game_info = sm.get("gameInfo") or {}
+    g_venue = game_info.get("venue") or {}
+    venue_parts = [p for p in (g_venue.get("fullName"), (g_venue.get("address") or {}).get("city")) if p]
+    officials = game_info.get("officials") or []
+    referee_name = ((officials[0].get("displayName") or "") if officials else "").strip()
 
     status_str, elapsed = _map_espn_status(comp.get("status") or {})
     h_sc = int(home_c["score"]) if str(home_c.get("score", "")).isdigit() else None
@@ -2241,6 +2343,9 @@ def fetch_espn_summary_detail(match_id: str, slug: str, event_id: str) -> dict[s
         "lineups": lineups,
         "stats": stats_pairs,
         "commentary": commentary_rows,
+        "venueName": " · ".join(venue_parts),
+        "attendance": int(game_info.get("attendance") or 0),
+        "refereeName": referee_name,
     }
 
 
@@ -2267,8 +2372,17 @@ def collect_data(
     scorers_list: list[dict[str, Any]] = []
     errors: list[str] = []
 
-    # Restore cached team squads/details & preserve previously resolved player portraits
+    # Restore cached team squads/details & preserve previously resolved player/coach portraits
     cached_portraits_by_name: dict[str, str] = {}
+    if PORTRAIT_CACHE_PATH.exists():
+        try:
+            raw_cache = json.loads(PORTRAIT_CACHE_PATH.read_text(encoding="utf-8"))
+            if isinstance(raw_cache, dict):
+                for k, v in raw_cache.items():
+                    if isinstance(k, str) and isinstance(v, str) and v.strip():
+                        cached_portraits_by_name[k.strip().lower()] = v.strip()
+        except Exception:  # noqa: BLE001
+            pass
     for cp in existing.get("players") or []:
         c_url = (cp.get("portraitUrl") or "").strip()
         c_nm = (cp.get("name") or "").strip().lower()
@@ -2278,6 +2392,10 @@ def collect_data(
         t_key = _normalize_team_key(td.get("name") or "")
         if t_key:
             teams_by_key[t_key] = td
+        c_coach = (td.get("coachName") or "").strip().lower()
+        c_coach_img = (td.get("coachPortraitUrl") or "").strip()
+        if c_coach and c_coach_img:
+            cached_portraits_by_name.setdefault(c_coach, c_coach_img)
         for sq in td.get("squad") or []:
             c_url = (sq.get("portraitUrl") or "").strip()
             c_nm = (sq.get("name") or "").strip().lower()
@@ -2420,6 +2538,9 @@ def collect_data(
 
     # 3. Fetch ESPN (schedules across UEL/UECL/ACL/J1/AL/MLS/WC/EC/UNL/U17WC + 2026 Standings + Rosters + Live Details)
     live_details: dict[str, Any] = {}
+    for mid, prev_det in (existing.get("liveDetails") or {}).items():
+        if mid in collected and isinstance(prev_det, dict) and (prev_det.get("events") or prev_det.get("lineups")):
+            live_details[mid] = prev_det
     if enable_espn:
         espn_events_index: dict[tuple[str, str], NormalizedMatch] = {}
         try:
@@ -2433,8 +2554,7 @@ def collect_data(
                         timeout_seconds=15,
                     )
                     for ev in sb.get("events") or []:
-                        ev_slug = ((ev.get("league") or {}).get("slug") or "").strip()
-                        nm = normalize_espn_event(ev, ev_slug)
+                        nm = normalize_espn_event(ev)
                         if nm and nm.competitionCode in competitions:
                             _merge_espn_match(nm, collected, espn_events_index)
                 except Exception:  # noqa: BLE001
@@ -2535,12 +2655,16 @@ def collect_data(
                 errors.append(f"ESPN directory attach: {exc}")
 
             # Pre-cache recent finished & live match details from ESPN summary for 0ms open
-            recent_targets = [
-                m for m in collected.values()
-                if m.espnSlug and m.espnEventId and m.status in {"LIVE", "PAUSED", "FINISHED"}
-            ][:60]
+            recent_targets = sorted(
+                (
+                    m for m in collected.values()
+                    if m.espnSlug and m.espnEventId and m.status in {"LIVE", "PAUSED", "FINISHED"}
+                ),
+                key=lambda x: x.utcDate,
+                reverse=True,
+            )[:180]
             if recent_targets:
-                with ThreadPoolExecutor(max_workers=6) as pool:
+                with ThreadPoolExecutor(max_workers=10) as pool:
                     futures = [
                         pool.submit(fetch_espn_summary_detail, m.id, m.espnSlug, m.espnEventId)
                         for m in recent_targets
@@ -2570,16 +2694,45 @@ def collect_data(
     for td in final_teams:
         if not td.get("crest"):
             td["crest"] = resolve_team_logo(td.get("name") or "", "")
+        cname = (td.get("coachName") or "").strip().lower()
+        if cname and not td.get("coachPortraitUrl") and cname in cached_portraits_by_name:
+            td["coachPortraitUrl"] = cached_portraits_by_name[cname]
         for sq in td.get("squad") or []:
-            if not sq.get("portraitUrl"):
-                nm_key = (sq.get("name") or "").strip().lower()
-                if nm_key in cached_portraits_by_name:
-                    sq["portraitUrl"] = cached_portraits_by_name[nm_key]
+            nm_key = (sq.get("name") or "").strip().lower()
+            if not sq.get("portraitUrl") and nm_key in cached_portraits_by_name:
+                sq["portraitUrl"] = cached_portraits_by_name[nm_key]
     if enable_espn:
         try:
-            enrich_missing_portraits(final_teams, final_players)
+            newly_resolved = enrich_missing_portraits(final_teams, final_players)
+            for k_nm, v_url in (newly_resolved or {}).items():
+                cached_portraits_by_name[k_nm.strip().lower()] = v_url
         except Exception as exc:  # noqa: BLE001
             errors.append(f"Wikipedia portraits: {exc}")
+
+    # Hydrate coach & squad portraits into pre-cached liveDetails lineups as well
+    all_portrait_lookup = dict(cached_portraits_by_name)
+    for p in final_players:
+        if p.get("name") and p.get("portraitUrl"):
+            all_portrait_lookup.setdefault(p["name"].strip().lower(), p["portraitUrl"])
+    for td in final_teams:
+        if td.get("coachName") and td.get("coachPortraitUrl"):
+            all_portrait_lookup.setdefault(td["coachName"].strip().lower(), td["coachPortraitUrl"])
+        for sq in td.get("squad") or []:
+            if sq.get("name") and sq.get("portraitUrl"):
+                all_portrait_lookup.setdefault(sq["name"].strip().lower(), sq["portraitUrl"])
+    for det in live_details.values():
+        for side in det.get("lineups") or []:
+            tk = _normalize_team_key(side.get("teamName") or "")
+            td_ref = teams_by_key.get(tk) if tk else None
+            if td_ref:
+                if not side.get("coachName") and td_ref.get("coachName"):
+                    side["coachName"] = td_ref["coachName"]
+                    side["coachZhName"] = td_ref.get("coachZhName") or localize_player(td_ref["coachName"])[0]
+                if not side.get("coachPortraitUrl"):
+                    side["coachPortraitUrl"] = td_ref.get("coachPortraitUrl") or all_portrait_lookup.get((side.get("coachName") or "").lower(), "")
+            for slot in (side.get("startXI") or []) + (side.get("substitutes") or []):
+                if not slot.get("portraitUrl"):
+                    slot["portraitUrl"] = all_portrait_lookup.get((slot.get("name") or "").strip().lower(), "")
     if errors:
         print(f"[warn] Partial API fetch warnings: {errors}", file=sys.stderr)
     return (

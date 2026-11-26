@@ -225,6 +225,29 @@ class GenerateFeedTest(unittest.TestCase):
         gf._merge_espn_match(espn_dup, collected, espn_index)
         self.assertEqual(list(collected.keys()), [fd_match.id])
 
+    def test_v26_espn_uid_slug_inference(self) -> None:
+        ev = {
+            "id": "401879234",
+            "uid": "s:600~l:700~e:401879234",
+            "date": "2026-11-22T15:00Z",
+            "season": {"year": 2026, "slug": "2026-27-english-premier-league"},
+            "status": {"type": {"state": "post", "name": "STATUS_FULL_TIME"}},
+            "competitions": [
+                {
+                    "competitors": [
+                        {"homeAway": "home", "score": "2", "team": {"id": "364", "displayName": "Liverpool"}},
+                        {"homeAway": "away", "score": "0", "team": {"id": "360", "displayName": "Manchester United"}},
+                    ]
+                }
+            ],
+        }
+        nm = gf.normalize_espn_event(ev)
+        self.assertIsNotNone(nm)
+        assert nm is not None
+        self.assertEqual(nm.competitionCode, "PL")
+        self.assertEqual(nm.espnSlug, "eng.1")
+        self.assertEqual(nm.homeTeamZhName, "利物浦")
+
 
 if __name__ == "__main__":
     unittest.main()

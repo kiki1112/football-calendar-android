@@ -72,6 +72,11 @@ data class GitHubFeedLiveDetailDto(
     val lineups: List<GitHubFeedLineupDto> = emptyList(),
     val stats: List<GitHubFeedStatPairDto> = emptyList(),
     val commentary: List<GitHubFeedCommentaryDto> = emptyList(),
+    val venueName: String = "",
+    val attendance: Int = 0,
+    val refereeName: String = "",
+    val weatherText: String = "",
+    val temperatureText: String = "",
 ) {
     fun toDomain(nowMillis: Long): LiveMatchDetail = LiveMatchDetail(
         matchId = matchId,
@@ -108,6 +113,21 @@ data class GitHubFeedLiveDetailDto(
                         zhName = s.zhName.ifBlank { TeamLocalization.localizePlayer(s.name).first },
                         number = s.number,
                         pos = s.pos,
+                        portraitUrl = s.portraitUrl,
+                        formationPlace = s.formationPlace,
+                        goals = s.goals,
+                        assists = s.assists,
+                        yellowCards = s.yellowCards,
+                        redCards = s.redCards,
+                        shots = s.shots,
+                        shotsOnTarget = s.shotsOnTarget,
+                        passes = s.passes,
+                        tackles = s.tackles,
+                        saves = s.saves,
+                        foulsCommitted = s.foulsCommitted,
+                        subbedIn = s.subbedIn,
+                        subbedOut = s.subbedOut,
+                        rating = s.rating,
                     )
                 },
                 substitutes = l.substitutes.map { s ->
@@ -116,11 +136,27 @@ data class GitHubFeedLiveDetailDto(
                         zhName = s.zhName.ifBlank { TeamLocalization.localizePlayer(s.name).first },
                         number = s.number,
                         pos = s.pos,
+                        portraitUrl = s.portraitUrl,
+                        formationPlace = s.formationPlace,
+                        goals = s.goals,
+                        assists = s.assists,
+                        yellowCards = s.yellowCards,
+                        redCards = s.redCards,
+                        shots = s.shots,
+                        shotsOnTarget = s.shotsOnTarget,
+                        passes = s.passes,
+                        tackles = s.tackles,
+                        saves = s.saves,
+                        foulsCommitted = s.foulsCommitted,
+                        subbedIn = s.subbedIn,
+                        subbedOut = s.subbedOut,
+                        rating = s.rating,
                     )
                 },
+                coachPortraitUrl = l.coachPortraitUrl,
             )
         },
-        stats = stats.map { MatchStatPair(it.labelZh, it.homeValue, it.awayValue) },
+        stats = stats.map { MatchStatPair(it.labelZh, it.homeValue, it.awayValue, it.group.ifBlank { inferStatGroup(it.labelZh) }) },
         syncedAtMillis = nowMillis,
         commentary = commentary.map {
             MatchCommentaryItem(
@@ -135,7 +171,23 @@ data class GitHubFeedLiveDetailDto(
                 isHomeTeam = it.isHomeTeam,
             )
         },
+        venueName = venueName,
+        attendance = attendance,
+        refereeName = refereeName,
+        weatherText = weatherText,
+        temperatureText = temperatureText,
     )
+
+    companion object {
+        fun inferStatGroup(labelZh: String): String = when {
+            labelZh.contains("传") || labelZh.contains("长传") || labelZh.contains("传中") -> "传球"
+            labelZh.contains("抢断") || labelZh.contains("拦截") || labelZh.contains("解围") ||
+                labelZh.contains("扑救") || labelZh.contains("犯规") || labelZh.contains("牌") -> "防守"
+            labelZh.contains("射") || labelZh.contains("角球") || labelZh.contains("越位") ||
+                labelZh.contains("预期") || labelZh.contains("点球") -> "进攻"
+            else -> "关键"
+        }
+    }
 }
 
 @Serializable
@@ -172,6 +224,21 @@ data class GitHubFeedLineupPlayerDto(
     val zhName: String = "",
     val number: Int = 0,
     val pos: String = "",
+    val portraitUrl: String = "",
+    val formationPlace: Int = 0,
+    val goals: Int = 0,
+    val assists: Int = 0,
+    val yellowCards: Int = 0,
+    val redCards: Int = 0,
+    val shots: Int = 0,
+    val shotsOnTarget: Int = 0,
+    val passes: Int = 0,
+    val tackles: Int = 0,
+    val saves: Int = 0,
+    val foulsCommitted: Int = 0,
+    val subbedIn: Boolean = false,
+    val subbedOut: Boolean = false,
+    val rating: String = "",
 )
 
 @Serializable
@@ -183,6 +250,7 @@ data class GitHubFeedLineupDto(
     val coachZhName: String = "",
     val startXI: List<GitHubFeedLineupPlayerDto> = emptyList(),
     val substitutes: List<GitHubFeedLineupPlayerDto> = emptyList(),
+    val coachPortraitUrl: String = "",
 )
 
 @Serializable
@@ -190,6 +258,7 @@ data class GitHubFeedStatPairDto(
     val labelZh: String = "",
     val homeValue: String = "",
     val awayValue: String = "",
+    val group: String = "",
 )
 
 @Serializable
@@ -379,6 +448,7 @@ data class GitHubFeedTeamDto(
     val coachName: String = "",
     val coachZhName: String = "",
     val coachNationality: String = "",
+    val coachPortraitUrl: String = "",
     val squad: List<GitHubFeedSquadMemberDto> = emptyList(),
     val espnTeamId: String = "",
     val espnSlug: String = "",
@@ -417,6 +487,7 @@ data class GitHubFeedTeamDto(
         },
         espnTeamId = espnTeamId,
         espnSlug = espnSlug,
+        coachPortraitUrl = coachPortraitUrl,
     )
 }
 
@@ -736,6 +807,8 @@ data class ApiFootballFixtureItemDto(
             lineups = parsedLineups,
             stats = parsedStats,
             syncedAtMillis = System.currentTimeMillis(),
+            venueName = fixture.venue?.name.orEmpty(),
+            refereeName = fixture.referee.orEmpty(),
         )
     }
 
@@ -744,16 +817,25 @@ data class ApiFootballFixtureItemDto(
         val homeMap = groups[0].statistics.orEmpty().associate { (it.type ?: "") to (it.value ?: "-") }
         val awayMap = groups[1].statistics.orEmpty().associate { (it.type ?: "") to (it.value ?: "-") }
         val keys = listOf(
-            "Ball Possession" to "控球率",
-            "Total Shots" to "射门次数",
-            "Shots on Goal" to "射正次数",
-            "Corner Kicks" to "角球",
-            "Passes %" to "传球成功率",
-            "Fouls" to "犯规",
-            "Yellow Cards" to "黄牌",
-            "expected_goals" to "预期进球 (xG)",
+            Triple("Ball Possession", "控球率", "关键"),
+            Triple("Total Shots", "射门次数", "进攻"),
+            Triple("Shots on Goal", "射正次数", "进攻"),
+            Triple("Shots off Goal", "射偏次数", "进攻"),
+            Triple("Blocked Shots", "射门被封堵", "进攻"),
+            Triple("Shots insidebox", "禁区内射门", "进攻"),
+            Triple("Shots outsidebox", "禁区外射门", "进攻"),
+            Triple("Corner Kicks", "角球", "进攻"),
+            Triple("Offsides", "越位", "进攻"),
+            Triple("expected_goals", "预期进球 (xG)", "进攻"),
+            Triple("Passes %", "传球成功率", "传球"),
+            Triple("Passes accurate", "精准传球", "传球"),
+            Triple("Total passes", "传球总数", "传球"),
+            Triple("Goalkeeper Saves", "门将扑救", "防守"),
+            Triple("Fouls", "犯规", "防守"),
+            Triple("Yellow Cards", "黄牌", "防守"),
+            Triple("Red Cards", "红牌", "防守"),
         )
-        return keys.mapNotNull { (rawKey, zhLabel) ->
+        return keys.mapNotNull { (rawKey, zhLabel, grp) ->
             val hv = (homeMap[rawKey] as? kotlinx.serialization.json.JsonPrimitive)
                 ?.takeIf { it !is kotlinx.serialization.json.JsonNull }
                 ?.content
@@ -761,7 +843,7 @@ data class ApiFootballFixtureItemDto(
                 ?.takeIf { it !is kotlinx.serialization.json.JsonNull }
                 ?.content
             if (hv != null || av != null) {
-                MatchStatPair(zhLabel, hv ?: "0", av ?: "0")
+                MatchStatPair(zhLabel, hv ?: "0", av ?: "0", grp)
             } else {
                 null
             }
@@ -796,6 +878,7 @@ object ApiFootballLeagueCatalog {
 @Serializable
 data class ApiFootballFixtureMetaDto(
     val id: Int = 0,
+    val referee: String? = null,
     val date: String = "",
     val status: ApiFootballStatusDto = ApiFootballStatusDto(),
     val venue: ApiFootballVenueDto? = null,

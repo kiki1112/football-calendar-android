@@ -52,11 +52,62 @@ object EspnLeagueCatalog {
 
     private val codeBySlug = slugByCode.entries.associate { (k, v) -> v to k }
 
+    private val slugByLeagueUidNum = mapOf(
+        "700" to "eng.1",
+        "740" to "esp.1",
+        "720" to "ger.1",
+        "730" to "ita.1",
+        "710" to "fra.1",
+        "775" to "uefa.champions",
+        "776" to "uefa.europa",
+        "20296" to "uefa.europa.conf",
+        "3902" to "afc.champions",
+        "750" to "jpn.1",
+        "3906" to "aus.1",
+        "770" to "usa.1",
+        "3914" to "eng.2",
+        "725" to "ned.1",
+        "715" to "por.1",
+        "630" to "bra.1",
+        "783" to "conmebol.libertadores",
+        "606" to "fifa.world",
+        "781" to "uefa.euro",
+        "2395" to "uefa.nations",
+        "5697" to "fifa.world.u17",
+    )
+
+    private val uidLeagueRegex = Regex("~l:(\\d+)~")
+
     val standingsCodes = listOf("UEL", "UECL", "ACL", "J1", "AL", "MLS")
 
     fun slugForCode(code: String): String? = slugByCode[code.uppercase()]
 
     fun codeForSlug(slug: String?): String? = slug?.let { codeBySlug[it.trim()] }
+
+    fun resolveSlug(fallbackSlug: String, leagueSlug: String?, uid: String?, seasonSlug: String? = null): String {
+        val cleanFallback = fallbackSlug.trim()
+        if (cleanFallback.isNotBlank()) return cleanFallback
+        val cleanLeague = leagueSlug?.trim().orEmpty()
+        if (cleanLeague.isNotBlank()) return cleanLeague
+        uid?.let { u ->
+            uidLeagueRegex.find(u)?.groupValues?.getOrNull(1)?.let { lid ->
+                slugByLeagueUidNum[lid]?.let { return it }
+            }
+        }
+        val sLow = seasonSlug?.lowercase().orEmpty()
+        return when {
+            "english-premier-league" in sLow -> "eng.1"
+            "spanish-laliga" in sLow || "laliga" in sLow -> "esp.1"
+            "german-bundesliga" in sLow -> "ger.1"
+            "italian-serie-a" in sLow -> "ita.1"
+            "french-ligue-1" in sLow -> "fra.1"
+            "champions-league" in sLow && "afc" !in sLow -> "uefa.champions"
+            "europa-league" in sLow -> "uefa.europa"
+            "conference-league" in sLow -> "uefa.europa.conf"
+            "u-17" in sLow || "u17" in sLow -> "fifa.world.u17"
+            else -> ""
+        }
+    }
 }
 
 @Serializable
@@ -67,15 +118,17 @@ data class EspnScoreboardResponse(
 @Serializable
 data class EspnEventDto(
     val id: String = "",
+    val uid: String = "",
     val date: String = "",
     val league: EspnEventLeagueDto? = null,
+    val season: EspnSeasonDto? = null,
     val status: EspnStatusDto? = null,
     val competitions: List<EspnCompetitionDto> = emptyList(),
 ) {
-    fun toMatchItem(fallbackSlug: String = ""): MatchItem? {
+    fun toMatchItem(fallbackSlug: String = "", allowUnmappedComp: Boolean = false): MatchItem? {
         if (id.isBlank() || date.isBlank()) return null
-        val slug = fallbackSlug.ifBlank { league?.slug.orEmpty() }.trim()
-        val compCode = EspnLeagueCatalog.codeForSlug(slug) ?: return null
+        val slug = EspnLeagueCatalog.resolveSlug(fallbackSlug, league?.slug, uid, season?.slug)
+        val compCode = EspnLeagueCatalog.codeForSlug(slug) ?: if (allowUnmappedComp) "OTHER" else return null
         val meta = CompetitionCatalog.findByCode(compCode)
         val comp = competitions.firstOrNull() ?: return null
         val homeC = comp.competitors.firstOrNull { it.homeAway == "home" } ?: comp.competitors.getOrNull(0)
@@ -84,8 +137,8 @@ data class EspnEventDto(
         val awayName = awayC?.team?.displayName?.ifBlank { awayC.team.name } ?: "TBD"
         val (statusEnum, elapsed) = parseEspnStatus(comp.status ?: status)
         val showScore = statusEnum.isLive || statusEnum == MatchStatus.FINISHED
-        val homeScore = if (showScore) homeC?.score?.toIntOrNull() else null
-        val awayScore = if (showScore) awayC?.score?.toIntOrNull() else null
+        val homeScore = if (showScore) parseScoreElement(homeC?.score) else null
+        val awayScore = if (showScore) parseScoreElement(awayC?.score) else null
         val homeLogo = homeC?.team?.logo?.ifBlank { null } ?: homeC?.team?.logos?.firstOrNull()?.href.orEmpty()
         val awayLogo = awayC?.team?.logo?.ifBlank { null } ?: awayC?.team?.logos?.firstOrNull()?.href.orEmpty()
 
@@ -113,12 +166,25 @@ data class EspnEventDto(
             homeTeamCrest = TeamAssetCatalog.resolveTeamLogo(homeName, homeLogo),
             awayTeamCrest = TeamAssetCatalog.resolveTeamLogo(awayName, awayLogo),
             elapsedMinutes = elapsed,
-            espnSlug = slug,
+            espnSlug = slug.ifBlank { null },
             espnEventId = id,
         )
     }
 
     companion object {
+        fun parseScoreElement(el: JsonElement?): Int? {
+            if (el == null) return null
+            return when (el) {
+                is JsonPrimitive -> el.intOrNull ?: el.doubleOrNull?.toInt() ?: el.contentOrNull?.toIntOrNull()
+                is JsonObject -> {
+                    val dv = (el["displayValue"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull()
+                    val v = (el["value"] as? JsonPrimitive)?.doubleOrNull?.toInt()
+                    dv ?: v
+                }
+                else -> null
+            }
+        }
+
         fun parseEspnStatus(st: EspnStatusDto?): Pair<MatchStatus, Int?> {
             val state = st?.type?.state?.lowercase().orEmpty()
             val name = st?.type?.name?.uppercase().orEmpty()
@@ -139,6 +205,12 @@ data class EspnEventDto(
         }
     }
 }
+
+@Serializable
+data class EspnSeasonDto(
+    val year: Int = 0,
+    val slug: String = "",
+)
 
 @Serializable
 data class EspnEventLeagueDto(
@@ -173,7 +245,7 @@ data class EspnVenueDto(
 @Serializable
 data class EspnCompetitorDto(
     val homeAway: String = "",
-    val score: String = "",
+    val score: JsonElement? = null,
     val team: EspnTeamStubDto? = null,
 )
 
@@ -199,6 +271,7 @@ data class EspnSummaryResponse(
     val rosters: List<EspnRosterSideDto> = emptyList(),
     val boxscore: EspnBoxscoreDto? = null,
     val commentary: List<EspnCommentaryItemDto> = emptyList(),
+    val gameInfo: EspnGameInfoDto? = null,
 ) {
     fun toLiveDetail(matchId: String, eventId: String): LiveMatchDetail {
         val comp = header?.competitions?.firstOrNull()
@@ -208,8 +281,8 @@ data class EspnSummaryResponse(
         val homeName = homeC?.team?.displayName.orEmpty()
         val (statusEnum, elapsed) = EspnEventDto.parseEspnStatus(comp?.status)
         val showScore = statusEnum.isLive || statusEnum == MatchStatus.FINISHED
-        val hScore = if (showScore) homeC?.score?.toIntOrNull() else null
-        val aScore = if (showScore) awayC?.score?.toIntOrNull() else null
+        val hScore = if (showScore) EspnEventDto.parseScoreElement(homeC?.score) else null
+        val aScore = if (showScore) EspnEventDto.parseScoreElement(awayC?.score) else null
 
         val parsedKeyEvents = keyEvents.mapNotNull { ke ->
             val rawType = ke.type?.text?.trim().orEmpty()
@@ -290,7 +363,7 @@ data class EspnSummaryResponse(
                 val dedupeKey = "$clockDisp|${rawText.lowercase()}"
                 if (seenComm.add(dedupeKey)) {
                     parsedCommentary += MatchCommentaryItem(
-                        sequence = if (cm.sequence > 0) cm.sequence else idx,
+                        sequence = (cm.sequence ?: 0).takeIf { it > 0 } ?: idx,
                         clockDisplay = clockDisp.ifBlank { if (mins > 0) "${mins}'" else "" },
                         elapsed = mins,
                         textEn = rawText,
@@ -342,22 +415,38 @@ data class EspnSummaryResponse(
             r.roster.forEach { slot ->
                 val pn = slot.athlete?.displayName?.trim().orEmpty()
                 if (pn.isNotBlank()) {
+                    val stMap = slot.stats.associate { it.name to (it.value ?: 0.0).roundToInt() }
                     val item = LineupPlayerItem(
                         name = pn,
                         zhName = TeamLocalization.localizePlayer(pn).first,
-                        number = slot.jersey.toIntOrNull() ?: 0,
+                        number = slot.jersey?.toIntOrNull() ?: 0,
                         pos = slot.position?.abbreviation.orEmpty(),
+                        portraitUrl = slot.athlete?.headshot?.href.orEmpty(),
+                        formationPlace = slot.formationPlace?.toIntOrNull() ?: 0,
+                        goals = stMap["totalGoals"] ?: 0,
+                        assists = stMap["goalAssists"] ?: 0,
+                        yellowCards = stMap["yellowCards"] ?: 0,
+                        redCards = stMap["redCards"] ?: 0,
+                        shots = stMap["totalShots"] ?: 0,
+                        shotsOnTarget = stMap["shotsOnTarget"] ?: 0,
+                        passes = stMap["totalPasses"] ?: 0,
+                        tackles = stMap["effectiveTackles"] ?: stMap["totalTackles"] ?: 0,
+                        saves = stMap["saves"] ?: 0,
+                        foulsCommitted = stMap["foulsCommitted"] ?: 0,
+                        subbedIn = slot.subbedIn,
+                        subbedOut = slot.subbedOut,
                     )
                     if (slot.starter) starters += item else subs += item
                 }
             }
+            val sortedStarters = starters.sortedWith(compareBy<LineupPlayerItem>({ if (it.formationPlace > 0) it.formationPlace else 99 }, { it.number }))
             MatchLineupSide(
                 teamName = tName,
                 teamZhName = TeamLocalization.localizeTeam(tName),
                 formation = r.formation.orEmpty(),
                 coachName = "",
                 coachZhName = "",
-                startXI = starters,
+                startXI = sortedStarters,
                 substitutes = subs,
             )
         }
@@ -368,15 +457,29 @@ data class EspnSummaryResponse(
             val homeTeamStats = (if (firstIsHome) statTeams[0] else statTeams[1]).statistics.associate { it.name to it.displayValue }
             val awayTeamStats = (if (firstIsHome) statTeams[1] else statTeams[0]).statistics.associate { it.name to it.displayValue }
             listOf(
-                "possessionPct" to "控球率",
-                "totalShots" to "射门次数",
-                "shotsOnTarget" to "射正次数",
-                "wonCorners" to "角球",
-                "passPct" to "传球成功率",
-                "foulsCommitted" to "犯规",
-                "yellowCards" to "黄牌",
-                "offsides" to "越位",
-            ).mapNotNull { (key, zhLabel) ->
+                Triple("possessionPct", "控球率", "关键"),
+                Triple("totalShots", "射门次数", "进攻"),
+                Triple("shotsOnTarget", "射正次数", "进攻"),
+                Triple("blockedShots", "射门被封堵", "进攻"),
+                Triple("shotPct", "射门命中率", "进攻"),
+                Triple("wonCorners", "角球", "进攻"),
+                Triple("offsides", "越位", "进攻"),
+                Triple("penaltyKickGoals", "点球得分", "进攻"),
+                Triple("accuratePasses", "精准传球", "传球"),
+                Triple("totalPasses", "传球总数", "传球"),
+                Triple("passPct", "传球成功率", "传球"),
+                Triple("crossPct", "传中成功率", "传球"),
+                Triple("longballPct", "长传成功率", "传球"),
+                Triple("effectiveTackles", "成功抢断", "防守"),
+                Triple("totalTackles", "总抢断次数", "防守"),
+                Triple("tacklePct", "抢断成功率", "防守"),
+                Triple("effectiveClearance", "有效解围", "防守"),
+                Triple("totalClearance", "总解围次数", "防守"),
+                Triple("saves", "门将扑救", "防守"),
+                Triple("foulsCommitted", "犯规", "防守"),
+                Triple("yellowCards", "黄牌", "防守"),
+                Triple("redCards", "红牌", "防守"),
+            ).mapNotNull { (key, zhLabel, grp) ->
                 val rawH = homeTeamStats[key]
                 val rawA = awayTeamStats[key]
                 if (rawH != null && rawA != null) {
@@ -384,6 +487,7 @@ data class EspnSummaryResponse(
                         labelZh = zhLabel,
                         homeValue = formatStat(key, rawH),
                         awayValue = formatStat(key, rawA),
+                        group = grp,
                     )
                 } else {
                     null
@@ -392,6 +496,12 @@ data class EspnSummaryResponse(
         } else {
             emptyList()
         }
+
+        val venueFull = listOfNotNull(
+            gameInfo?.venue?.fullName?.takeIf { it.isNotBlank() },
+            gameInfo?.venue?.address?.city?.takeIf { it.isNotBlank() },
+        ).joinToString(" · ")
+        val refName = gameInfo?.officials?.firstOrNull()?.displayName.orEmpty()
 
         return LiveMatchDetail(
             matchId = matchId,
@@ -405,6 +515,9 @@ data class EspnSummaryResponse(
             stats = parsedStats,
             syncedAtMillis = System.currentTimeMillis(),
             commentary = parsedCommentary,
+            venueName = venueFull,
+            attendance = gameInfo?.attendance ?: 0,
+            refereeName = refName,
         )
     }
 
@@ -457,9 +570,9 @@ data class EspnSummaryResponse(
 
     private fun formatStat(key: String, raw: String): String {
         if (key == "possessionPct") return if (raw.endsWith("%")) raw else "$raw%"
-        if (key == "passPct") {
+        if (key in setOf("passPct", "crossPct", "longballPct", "tacklePct", "shotPct")) {
             val d = raw.removeSuffix("%").toDoubleOrNull() ?: return raw
-            return if (d <= 1.0) "${(d * 100).roundToInt()}%" else "${d.roundToInt()}%"
+            return if (d <= 1.0 && !raw.endsWith("%")) "${(d * 100).roundToInt()}%" else "${d.roundToInt()}%"
         }
         return raw
     }
@@ -467,10 +580,34 @@ data class EspnSummaryResponse(
 
 @Serializable
 data class EspnCommentaryItemDto(
-    val sequence: Int = 0,
+    val sequence: Int? = null,
     val time: EspnClockDto? = null,
     val text: String = "",
     val play: EspnCommentaryPlayDto? = null,
+)
+
+@Serializable
+data class EspnGameInfoDto(
+    val venue: EspnGameVenueDto? = null,
+    val attendance: Int = 0,
+    val officials: List<EspnOfficialDto> = emptyList(),
+)
+
+@Serializable
+data class EspnGameVenueDto(
+    val fullName: String = "",
+    val address: EspnAddressDto? = null,
+)
+
+@Serializable
+data class EspnAddressDto(
+    val city: String = "",
+    val country: String = "",
+)
+
+@Serializable
+data class EspnOfficialDto(
+    val displayName: String = "",
 )
 
 @Serializable
@@ -518,6 +655,7 @@ data class EspnParticipantDto(
 @Serializable
 data class EspnAthleteStubDto(
     val displayName: String = "",
+    val headshot: EspnLogoDto? = null,
 )
 
 @Serializable
@@ -530,9 +668,19 @@ data class EspnRosterSideDto(
 @Serializable
 data class EspnRosterSlotDto(
     val starter: Boolean = false,
-    val jersey: String = "",
+    val jersey: String? = null,
+    val formationPlace: String? = null,
+    val subbedIn: Boolean = false,
+    val subbedOut: Boolean = false,
     val athlete: EspnAthleteStubDto? = null,
     val position: EspnPositionDto? = null,
+    val stats: List<EspnRosterPlayerStatDto> = emptyList(),
+)
+
+@Serializable
+data class EspnRosterPlayerStatDto(
+    val name: String = "",
+    val value: Double? = null,
 )
 
 @Serializable

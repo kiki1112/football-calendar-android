@@ -215,4 +215,37 @@ class TeamAssetCatalogTest {
         assertTrue(bio.contains("曼城"))
         assertTrue(bio.contains("15 粒进球"))
     }
+
+    @org.junit.Test
+    fun espnUidInfersSlugAndHandlesNullCommentarySequence() {
+        assertEquals(
+            "eng.1",
+            com.footballcalendar.app.data.remote.EspnLeagueCatalog.resolveSlug(
+                fallbackSlug = "",
+                leagueSlug = null,
+                uid = "s:600~l:700~e:401879234",
+                seasonSlug = "2026-27-english-premier-league",
+            ),
+        )
+        assertEquals(
+            "uefa.europa",
+            com.footballcalendar.app.data.remote.EspnLeagueCatalog.resolveSlug(
+                fallbackSlug = "",
+                leagueSlug = null,
+                uid = "s:600~l:776~e:401915506",
+                seasonSlug = null,
+            ),
+        )
+        val parser = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; coerceInputValues = true }
+        val u17Sample = """
+            {
+              "header": {"competitions": [{"competitors": [{"homeAway": "home", "score": "0", "team": {"id": "8422", "displayName": "New Zealand U17"}}, {"homeAway": "away", "score": "6", "team": {"id": "8410", "displayName": "Belgium U17"}}]}]},
+              "commentary": [{"sequence": null, "time": {"displayValue": "3'"}, "text": "Goal! Belgium U17 1, New Zealand U17 0."}]
+            }
+        """.trimIndent()
+        val parsed = parser.decodeFromString(com.footballcalendar.app.data.remote.EspnSummaryResponse.serializer(), u17Sample)
+        val det = parsed.toLiveDetail("af-1546199", "401873571")
+        assertEquals(1, det.commentary.size)
+        assertEquals("3'", det.commentary[0].clockDisplay)
+    }
 }
