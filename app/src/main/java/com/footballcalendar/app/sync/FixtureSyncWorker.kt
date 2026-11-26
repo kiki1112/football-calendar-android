@@ -43,6 +43,14 @@ class FixtureSyncWorker(
             }
         }
 
+        // Live broadcast push check for ongoing/just-scored/fulltime matches in background
+        if (prefs.notifyOnLiveBroadcast) {
+            val alerts = container.fixtureRepository.pollLiveUpdatesWithBroadcasts().getOrDefault(emptyList())
+            if (alerts.isNotEmpty()) {
+                container.notificationHelper.notifyLiveBroadcasts(alerts)
+            }
+        }
+
         // Pre-match reminder check for favorite teams (or all followed competitions if no favorite set)
         if (prefs.notifyBeforeMatchMinutes > 0) {
             val allMatches = container.fixtureRepository.getAllMatchesOnce()

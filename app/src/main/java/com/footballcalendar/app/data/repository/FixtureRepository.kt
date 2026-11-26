@@ -1,5 +1,6 @@
 package com.footballcalendar.app.data.repository
 
+import android.content.Context
 import com.footballcalendar.app.data.local.MatchDao
 import com.footballcalendar.app.data.local.MatchEntity
 import com.footballcalendar.app.data.local.StandingDao
@@ -10,7 +11,9 @@ import com.footballcalendar.app.data.preferences.UserPreferencesRepository
 import com.footballcalendar.app.data.remote.EspnLeagueCatalog
 import com.footballcalendar.app.data.remote.FeedApiService
 import com.footballcalendar.app.data.remote.FixtureDataSource
+import com.footballcalendar.app.data.remote.GitHubFeedResponse
 import com.footballcalendar.app.model.DataSourceMode
+import com.footballcalendar.app.model.LiveBroadcastAlert
 import com.footballcalendar.app.model.LiveMatchDetail
 import com.footballcalendar.app.model.MatchH2HBundle
 import com.footballcalendar.app.model.MatchItem
@@ -42,8 +45,10 @@ import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
+import java.util.zip.GZIPInputStream
 
 class FixtureRepository(
+    private val appContext: Context,
     private val matchDao: MatchDao,
     private val standingDao: StandingDao,
     private val teamDao: TeamDao,
@@ -61,6 +66,10 @@ class FixtureRepository(
     private val teamScheduleCache = ConcurrentHashMap<String, Pair<Long, List<MatchItem>>>()
     private val h2hCache = ConcurrentHashMap<String, Pair<Long, MatchH2HBundle>>()
     private val teamDecodeCache = ConcurrentHashMap<String, Pair<Int, TeamDetailInfo>>()
+    private val knownLiveSnapshots = ConcurrentHashMap<String, Triple<MatchStatus, Int?, Int?>>()
+    private val emittedBroadcastKeys = Collections.synchronizedSet(mutableSetOf<String>())
+    private var lastStandingsSignature: Int = 0
+    private var lastTeamsSignature: Int = 0
     private val wikiPortraitCache = ConcurrentHashMap<String, String>().apply {
         TeamAssetCatalog.starPlayers.forEach { p ->
             if (p.portraitUrl.isNotBlank()) put(p.name.lowercase(), p.portraitUrl)
@@ -101,8 +110,58 @@ class FixtureRepository(
         matchDao.getAllMatchesOnce().map { it.toDomain() }
 
     suspend fun ensureSeededIfEmpty() {
-        if (matchDao.getAllMatchesOnce().isEmpty() || standingDao.getAllStandingsOnce().isEmpty()) {
+        val prefs = prefsRepo.currentPreferences()
+        val hasMatches = matchDao.getAllMatchesOnce().isNotEmpty()
+        val hasStandings = standingDao.getAllStandingsOnce().isNotEmpty()
+        if (!hasMatches || !hasStandings) {
+            seedFromBundledAsset(prefs.followedCompetitions, populateDb = true)
             runCatching { syncFixtures() }
+        } else if (_starPlayers.value.size <= 25) {
+            // Fast 0ms warm-start hydration of ranked players & pre-cached match details from bundled snapshot
+            seedFromBundledAsset(prefs.followedCompetitions, populateDb = false)
+        }
+    }
+
+    private suspend fun seedFromBundledAsset(
+        followedCompetitions: Set<String>,
+        populateDb: Boolean,
+    ) {
+        runCatching {
+            val rawText = appContext.assets.open("seed_fixtures.json.gz").use { stream ->
+                GZIPInputStream(stream).bufferedReader(Charsets.UTF_8).readText()
+            }
+            val parsed = json.decodeFromString(GitHubFeedResponse.serializer(), rawText)
+            val payload = parsed.toSyncPayload(followedCompetitions)
+            if (payload.players.isNotEmpty()) {
+                _starPlayers.value = payload.players
+                payload.players.forEach { p ->
+                    if (p.portraitUrl.isNotBlank()) wikiPortraitCache[p.name.lowercase()] = p.portraitUrl
+                }
+            }
+            if (payload.liveDetails.isNotEmpty()) {
+                liveDetailCache.putAll(payload.liveDetails)
+            }
+            payload.teams.forEach { td ->
+                if (td.espnTeamId.isNotBlank() && td.espnSlug.isNotBlank()) {
+                    indexEspnTeamRef(td.name, td.zhName, td.espnSlug, td.espnTeamId)
+                }
+                td.squad.forEach { sq ->
+                    if (sq.portraitUrl.isNotBlank()) {
+                        wikiPortraitCache.putIfAbsent(sq.name.lowercase(), sq.portraitUrl)
+                    }
+                }
+            }
+            if (populateDb) {
+                if (payload.matches.isNotEmpty()) {
+                    matchDao.replaceAll(payload.matches.map { MatchEntity.fromDomain(it) })
+                }
+                if (payload.standings.isNotEmpty()) {
+                    standingDao.replaceAll(payload.standings.map { StandingEntity.fromDomain(it) })
+                }
+                if (payload.teams.isNotEmpty()) {
+                    teamDao.replaceAll(payload.teams.map { TeamEntity.fromDomain(it, json) })
+                }
+            }
         }
     }
 
@@ -132,14 +191,22 @@ class FixtureRepository(
 
             var standingsSyncedMillis: Long? = null
             if (payload.standings.isNotEmpty()) {
-                standingDao.replaceAll(payload.standings.map { StandingEntity.fromDomain(it) })
+                val sig = payload.standings.size * 31 + payload.standings.take(20).sumOf { it.points * 7 + it.rank }
+                if (modeChanged || sig != lastStandingsSignature || standingDao.getAllStandingsOnce().isEmpty()) {
+                    standingDao.replaceAll(payload.standings.map { StandingEntity.fromDomain(it) })
+                    lastStandingsSignature = sig
+                }
                 standingsSyncedMillis = System.currentTimeMillis()
             } else if (modeChanged) {
                 standingDao.clearAll()
             }
 
             if (payload.teams.isNotEmpty()) {
-                teamDao.replaceAll(payload.teams.map { TeamEntity.fromDomain(it, json) })
+                val tSig = payload.teams.size * 31 + payload.teams.sumOf { it.squad.size * 13 + it.zhName.hashCode() }
+                if (modeChanged || tSig != lastTeamsSignature || teamDao.getAllTeamsOnce().isEmpty()) {
+                    teamDao.replaceAll(payload.teams.map { TeamEntity.fromDomain(it, json) })
+                    lastTeamsSignature = tSig
+                }
                 payload.teams.forEach { td ->
                     if (td.espnTeamId.isNotBlank() && td.espnSlug.isNotBlank()) {
                         indexEspnTeamRef(td.name, td.zhName, td.espnSlug, td.espnTeamId)
@@ -189,15 +256,19 @@ class FixtureRepository(
 
     /**
      * Zero-quota, near-zero-latency live score refresh using ESPN `all/scoreboard` first,
-     * supplementing with API-Football `fixtures?live=all` only when non-ESPN leagues (J2/KL1/U20AC)
-     * have active windows (throttled to >= 180s to protect the 100/day Free plan quota).
+     * returning real-time broadcast alerts (kickoffs, goals with scorers, full-time results).
      */
-    suspend fun refreshLiveScoresEspnFirst(): Result<Int> {
+    suspend fun pollLiveUpdatesWithBroadcasts(): Result<List<LiveBroadcastAlert>> {
         return runCatching {
             val prefs = prefsRepo.currentPreferences()
-            if (prefs.dataSourceMode == DataSourceMode.DEMO) return@runCatching 0
+            if (prefs.dataSourceMode == DataSourceMode.DEMO) return@runCatching emptyList()
 
             val existing = matchDao.getAllMatchesOnce().map { it.toDomain() }.toMutableList()
+            if (knownLiveSnapshots.isEmpty()) {
+                existing.forEach { m ->
+                    knownLiveSnapshots[m.id] = Triple(m.status, m.homeScore, m.awayScore)
+                }
+            }
             val changedItems = mutableListOf<MatchItem>()
 
             // 1. Free ESPN global live scoreboard (0 quota, fast real-time updates)
@@ -240,9 +311,72 @@ class FixtureRepository(
             if (changedItems.isNotEmpty()) {
                 matchDao.upsertAll(changedItems.distinctBy { it.id }.map { MatchEntity.fromDomain(it) })
             }
-            changedItems.size
+
+            val alerts = mutableListOf<LiveBroadcastAlert>()
+            for (updated in changedItems.distinctBy { it.id }) {
+                val isRelevant = updated.competitionCode in prefs.followedCompetitions ||
+                    updated.id in prefs.watchlistMatchIds ||
+                    updated.involvesAnyTeam(prefs.favoriteTeams)
+                if (!isRelevant) continue
+
+                val prev = knownLiveSnapshots[updated.id]
+                knownLiveSnapshots[updated.id] = Triple(updated.status, updated.homeScore, updated.awayScore)
+                if (prev == null) continue
+
+                val (prevStatus, prevH, prevA) = prev
+                val curH = updated.homeScore
+                val curA = updated.awayScore
+                val scoreChanged = (curH != null && prevH != null && curH > prevH) ||
+                    (curA != null && prevA != null && curA > prevA) ||
+                    (curH != null && curA != null && prevH == null && prevA == null && (curH > 0 || curA > 0))
+
+                if (scoreChanged) {
+                    var scorerDetail = "${updated.competitionZhName} · 实时比分 ${curH ?: 0}:${curA ?: 0}"
+                    if (updated.espnSlug != null && updated.espnEventId != null) {
+                        val det = fetchMatchLiveDetail(updated, forceRefresh = true).getOrNull()
+                        val lastGoal = det?.events?.lastOrNull { it.type.equals("Goal", true) }
+                        if (lastGoal != null) {
+                            val minTag = if (lastGoal.extra != null) "${lastGoal.elapsed}+${lastGoal.extra}'" else "${lastGoal.elapsed}'"
+                            scorerDetail = "$minTag ${lastGoal.playerZhName} 破门 · ${updated.competitionZhName}"
+                        }
+                    }
+                    val alertKey = "${updated.id}|score|${curH ?: 0}:${curA ?: 0}"
+                    if (emittedBroadcastKeys.add(alertKey)) {
+                        alerts += LiveBroadcastAlert(
+                            id = alertKey,
+                            match = updated,
+                            headline = "⚽ 进球播报！${updated.homeTeamZhName} ${curH ?: 0}:${curA ?: 0} ${updated.awayTeamZhName}",
+                            detail = scorerDetail,
+                        )
+                    }
+                } else if (!prevStatus.isLive && updated.status.isLive) {
+                    val alertKey = "${updated.id}|kickoff"
+                    if (emittedBroadcastKeys.add(alertKey)) {
+                        alerts += LiveBroadcastAlert(
+                            id = alertKey,
+                            match = updated,
+                            headline = "🏁 开赛播报！${updated.homeTeamZhName} vs ${updated.awayTeamZhName}",
+                            detail = "${updated.competitionZhName} 已开球 · 正在同步实时图文事件",
+                        )
+                    }
+                } else if (prevStatus.isLive && updated.status == MatchStatus.FINISHED) {
+                    val alertKey = "${updated.id}|fulltime"
+                    if (emittedBroadcastKeys.add(alertKey)) {
+                        alerts += LiveBroadcastAlert(
+                            id = alertKey,
+                            match = updated,
+                            headline = "⏹ 全场战报：${updated.homeTeamZhName} ${curH ?: 0}:${curA ?: 0} ${updated.awayTeamZhName}",
+                            detail = "${updated.competitionZhName} 全场比赛结束",
+                        )
+                    }
+                }
+            }
+            alerts
         }
     }
+
+    suspend fun refreshLiveScoresEspnFirst(): Result<Int> =
+        pollLiveUpdatesWithBroadcasts().map { it.size }
 
     private fun applyLiveUpdate(
         live: MatchItem,
@@ -561,14 +695,71 @@ class FixtureRepository(
     }
 
     suspend fun enrichSinglePlayerPortrait(player: StarPlayer): StarPlayer {
-        if (player.portraitUrl.isNotBlank()) return player
-        val resolved = enrichWikipediaPortraitsBatch(listOf(player.name))[player.name]
-            ?: runCatching { searchExternalPlayer(player.name).getOrNull()?.portraitUrl }.getOrNull()
-            ?: ""
-        if (resolved.isBlank()) return player
-        val updated = player.copy(portraitUrl = resolved)
+        val needPortrait = player.portraitUrl.isBlank()
+        val needBio = player.bio.isBlank()
+        if (!needPortrait && !needBio) return player
+
+        var newPortrait = player.portraitUrl
+        var newBio = player.bio
+        if (needPortrait) {
+            newPortrait = enrichWikipediaPortraitsBatch(listOf(player.name))[player.name]
+                ?: wikiPortraitCache[player.name.lowercase()]
+                ?: ""
+        }
+        if (needPortrait || needBio) {
+            val wikiCandidate = runCatching { fetchWikipediaBioAndPortrait(player.name) }.getOrNull()
+            if (newPortrait.isBlank() && !wikiCandidate?.first.isNullOrBlank()) {
+                newPortrait = wikiCandidate!!.first
+            }
+            if (newBio.isBlank() && !wikiCandidate?.second.isNullOrBlank()) {
+                newBio = wikiCandidate!!.second
+            }
+        }
+        if (newBio.isBlank()) {
+            newBio = TeamAssetCatalog.buildStructuredPlayerBio(player.copy(portraitUrl = newPortrait))
+        }
+        if (newPortrait == player.portraitUrl && newBio == player.bio) return player
+        val updated = player.copy(portraitUrl = newPortrait, bio = newBio)
         _starPlayers.value = _starPlayers.value.map { if (it.id == player.id) updated else it }
         return updated
+    }
+
+    private suspend fun fetchWikipediaBioAndPortrait(enName: String): Pair<String, String> {
+        val cleaned = enName.trim()
+        if (cleaned.isBlank()) return "" to ""
+        val searchUrl = "https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=" +
+            URLEncoder.encode("$cleaned footballer", "UTF-8") +
+            "&gsrlimit=1&prop=pageimages&pithumbsize=300&format=json"
+        val searchTitle = runCatching {
+            apiService.fetchWikipediaPageImages(searchUrl).query?.pages?.values?.firstOrNull()
+        }.getOrNull()
+        val resolvedTitle = searchTitle?.title?.ifBlank { cleaned } ?: cleaned
+        var portrait = searchTitle?.thumbnail?.source.orEmpty()
+
+        val encodedEn = URLEncoder.encode(resolvedTitle.replace(' ', '_'), "UTF-8")
+        val enSum = runCatching {
+            apiService.fetchWikipediaSummary("https://en.wikipedia.org/api/rest_v1/page/summary/$encodedEn")
+        }.getOrNull()
+        if (portrait.isBlank()) {
+            portrait = enSum?.thumbnail?.source.orEmpty()
+        }
+        val zhTitle = runCatching {
+            val langUrl = "https://en.wikipedia.org/w/api.php?action=query&prop=langlinks&lllang=zh&format=json&titles=" +
+                URLEncoder.encode(resolvedTitle, "UTF-8")
+            apiService.fetchWikipediaLanglinks(langUrl).query?.pages?.values?.firstOrNull()?.langlinks?.firstOrNull()?.title
+        }.getOrNull()
+        val zhSum = if (!zhTitle.isNullOrBlank()) {
+            runCatching {
+                apiService.fetchWikipediaSummary(
+                    "https://zh.wikipedia.org/api/rest_v1/page/summary/${URLEncoder.encode(zhTitle.replace(' ', '_'), "UTF-8")}",
+                )
+            }.getOrNull()
+        } else {
+            null
+        }
+        val bestBio = zhSum?.extract?.ifBlank { null } ?: enSum?.extract.orEmpty()
+        if (portrait.isNotBlank()) wikiPortraitCache[cleaned.lowercase()] = portrait
+        return portrait to bestBio
     }
 
     suspend fun fetchTeamDetailOnDemand(
@@ -744,6 +935,29 @@ class FixtureRepository(
         val missingForWikidata = toQuery.filter { !result.containsKey(it) && it.isNotBlank() }.take(40)
         if (missingForWikidata.isNotEmpty()) {
             result.putAll(fetchWikidataPortraitsBatch(missingForWikidata))
+        }
+        val missingForSearch = toQuery.filter { !result.containsKey(it) && it.isNotBlank() }.take(10)
+        if (missingForSearch.isNotEmpty()) {
+            coroutineScope {
+                missingForSearch.map { rawName ->
+                    async {
+                        val sUrl = "https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=" +
+                            URLEncoder.encode("$rawName footballer", "UTF-8") +
+                            "&gsrlimit=1&prop=pageimages&pithumbsize=300&format=json"
+                        val thumb = runCatching {
+                            apiService.fetchWikipediaPageImages(sUrl).query?.pages?.values?.firstOrNull()?.thumbnail?.source
+                        }.getOrNull()
+                        if (!thumb.isNullOrBlank()) {
+                            wikiPortraitCache[rawName.lowercase()] = thumb
+                            rawName to thumb
+                        } else {
+                            null
+                        }
+                    }
+                }.forEach { def ->
+                    def.await()?.let { (k, v) -> result[k] = v }
+                }
+            }
         }
         return result
     }

@@ -185,6 +185,46 @@ class GenerateFeedTest(unittest.TestCase):
         self.assertIn("↑", sub_zh)
         self.assertIn("↓", sub_zh)
 
+    def test_v25_acl_logos_flagcdn_and_brazil_dedup(self) -> None:
+        self.assertEqual(
+            gf.resolve_team_logo("Jeonbuk Hyundai Motors"),
+            "https://media.api-sports.io/football/teams/2762.png",
+        )
+        self.assertEqual(
+            gf.resolve_team_logo("DR Congo"),
+            "https://flagcdn.com/w160/cd.png",
+        )
+        self.assertEqual(loc.localize_team("Atlético-MG"), "米内罗竞技")
+        self.assertEqual(loc.localize_team("CA Mineiro"), "米内罗竞技")
+        self.assertEqual(loc.localize_team("Corinthians"), "科林蒂安")
+
+        import dataclasses
+        raw_fd = {
+            "id": 555091,
+            "utcDate": "2026-11-26T22:00:00Z",
+            "status": "FINISHED",
+            "matchday": 35,
+            "stage": "REGULAR_SEASON",
+            "lastUpdated": "2026-11-27T00:05:00Z",
+            "competition": {"code": "BSA", "name": "Campeonato Brasileiro Série A"},
+            "homeTeam": {"id": 1766, "name": "CA Mineiro", "shortName": "Mineiro", "tla": "CAM"},
+            "awayTeam": {"id": 1779, "name": "SC Corinthians Paulista", "shortName": "Corinthians", "tla": "COR"},
+            "score": {"fullTime": {"home": 1, "away": 1}},
+        }
+        fd_match = gf.normalize_api_match(raw_fd, "BSA")
+        espn_dup = dataclasses.replace(
+            fd_match,
+            id="espn-401841319",
+            homeTeamName="Atlético-MG",
+            awayTeamName="Corinthians",
+            homeTeamZhName=loc.localize_team("Atlético-MG"),
+            awayTeamZhName=loc.localize_team("Corinthians"),
+        )
+        collected = {fd_match.id: fd_match}
+        espn_index: dict[tuple[str, str], gf.NormalizedMatch] = {}
+        gf._merge_espn_match(espn_dup, collected, espn_index)
+        self.assertEqual(list(collected.keys()), [fd_match.id])
+
 
 if __name__ == "__main__":
     unittest.main()

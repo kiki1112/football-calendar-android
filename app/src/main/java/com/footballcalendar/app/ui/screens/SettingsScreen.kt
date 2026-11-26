@@ -63,7 +63,8 @@ fun SettingsScreen(
     onSaveDataSource: (DataSourceMode, String, String, String) -> Unit,
     onSimulateDemoUpdate: () -> Unit,
     onUpdateSyncSettings: (Boolean, Int, Boolean) -> Unit,
-    onUpdateDisplayAndNotifications: (Boolean, Boolean, Int, Boolean) -> Unit,
+    onUpdateDisplayAndNotifications: (Boolean, Boolean, Int, Boolean, Boolean) -> Unit,
+    onTestLiveBroadcast: () -> Unit,
     onSyncSystemCalendarNow: () -> Unit,
     onOpenMatchDetail: (MatchItem) -> Unit,
     onOpenTeamDetail: (enName: String, zhName: String, compCode: String, crest: String, teamId: Int) -> Unit,
@@ -83,6 +84,7 @@ fun SettingsScreen(
 
     var watchNightGrouping by remember(state.prefs.watchNightGrouping) { mutableStateOf(state.prefs.watchNightGrouping) }
     var notifyOnChange by remember(state.prefs.notifyOnScheduleChange) { mutableStateOf(state.prefs.notifyOnScheduleChange) }
+    var notifyOnLiveBroadcast by remember(state.prefs.notifyOnLiveBroadcast) { mutableStateOf(state.prefs.notifyOnLiveBroadcast) }
     var notifyBeforeMins by remember(state.prefs.notifyBeforeMatchMinutes) { mutableIntStateOf(state.prefs.notifyBeforeMatchMinutes) }
     var autoSyncCalendar by remember(state.prefs.autoSyncSystemCalendar) { mutableStateOf(state.prefs.autoSyncSystemCalendar) }
 
@@ -96,6 +98,7 @@ fun SettingsScreen(
         wifiOnly = state.prefs.wifiOnlySync
         watchNightGrouping = state.prefs.watchNightGrouping
         notifyOnChange = state.prefs.notifyOnScheduleChange
+        notifyOnLiveBroadcast = state.prefs.notifyOnLiveBroadcast
         notifyBeforeMins = state.prefs.notifyBeforeMatchMinutes
         autoSyncCalendar = state.prefs.autoSyncSystemCalendar
     }
@@ -114,7 +117,7 @@ fun SettingsScreen(
         val allGranted = perms.values.all { it }
         if (allGranted) {
             autoSyncCalendar = true
-            onUpdateDisplayAndNotifications(watchNightGrouping, notifyOnChange, notifyBeforeMins, true)
+            onUpdateDisplayAndNotifications(watchNightGrouping, notifyOnChange, notifyBeforeMins, true, notifyOnLiveBroadcast)
         } else {
             autoSyncCalendar = false
             onShowMessage("需要日历读写权限才能自动托管同步到系统日历")
@@ -366,9 +369,34 @@ fun SettingsScreen(
                             checked = watchNightGrouping,
                             onCheckedChange = { checked ->
                                 watchNightGrouping = checked
-                                onUpdateDisplayAndNotifications(checked, notifyOnChange, notifyBeforeMins, autoSyncCalendar)
+                                onUpdateDisplayAndNotifications(checked, notifyOnChange, notifyBeforeMins, autoSyncCalendar, notifyOnLiveBroadcast)
                             },
                         )
+                        HorizontalDivider(color = AppleCanvas)
+                        AppleSwitchRow(
+                            title = "比赛实时进球与赛况播报推送",
+                            subtitle = "开赛、实时进球破门与终场比分第一时间弹出消息通知",
+                            checked = notifyOnLiveBroadcast,
+                            onCheckedChange = { checked ->
+                                if (checked && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                    notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                }
+                                notifyOnLiveBroadcast = checked
+                                onUpdateDisplayAndNotifications(watchNightGrouping, notifyOnChange, notifyBeforeMins, autoSyncCalendar, checked)
+                            },
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                    notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                }
+                                onTestLiveBroadcast()
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                        ) {
+                            Text("发送一条测试实时播报推送", fontWeight = FontWeight.SemiBold, color = AppleRed)
+                        }
                         HorizontalDivider(color = AppleCanvas)
                         AppleSwitchRow(
                             title = "赛程改期 / 延期即时通知",
@@ -379,7 +407,7 @@ fun SettingsScreen(
                                     notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                                 }
                                 notifyOnChange = checked
-                                onUpdateDisplayAndNotifications(watchNightGrouping, checked, notifyBeforeMins, autoSyncCalendar)
+                                onUpdateDisplayAndNotifications(watchNightGrouping, checked, notifyBeforeMins, autoSyncCalendar, notifyOnLiveBroadcast)
                             },
                         )
                     }
@@ -404,7 +432,7 @@ fun SettingsScreen(
                                     )
                                 } else {
                                     autoSyncCalendar = false
-                                    onUpdateDisplayAndNotifications(watchNightGrouping, notifyOnChange, notifyBeforeMins, false)
+                                    onUpdateDisplayAndNotifications(watchNightGrouping, notifyOnChange, notifyBeforeMins, false, notifyOnLiveBroadcast)
                                 }
                             },
                         )

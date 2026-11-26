@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -48,6 +49,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.footballcalendar.app.model.CompetitionCatalog
@@ -414,6 +416,7 @@ fun TeamDetailBottomSheet(
     isFavorite: Boolean,
     canNavigateBack: Boolean = false,
     onNavigateBack: () -> Unit = {},
+    onCloseAll: () -> Unit = onNavigateBack,
     onToggleFavorite: () -> Unit,
     onClickSquadMember: (SquadMember) -> Unit,
     onClickMatch: (MatchItem) -> Unit,
@@ -422,40 +425,77 @@ fun TeamDetailBottomSheet(
         matches
             .filter { it.status == MatchStatus.FINISHED || (it.homeScore != null && it.awayScore != null && !it.status.isLive) }
             .sortedByDescending { it.utcDate }
-            .take(12)
+            .take(15)
     }
     val upcomingMatches = remember(matches, team.name) {
         matches
             .filter { it.status != MatchStatus.FINISHED && !it.status.isCancelledOrPostponed }
             .sortedBy { it.utcDate }
-            .take(6)
+            .take(8)
     }
 
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxWidth()
-            .fillMaxHeight(0.84f)
-            .navigationBarsPadding(),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = Color.White,
     ) {
-        if (canNavigateBack) {
-            item {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding(),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Surface(
-                    onClick = onNavigateBack,
+                    onClick = if (canNavigateBack) onNavigateBack else onCloseAll,
                     color = AppleCanvas,
                     shape = RoundedCornerShape(999.dp),
                 ) {
                     Text(
-                        text = "‹ 返回上一页",
+                        text = if (canNavigateBack) "‹ 返回上一页" else "‹ 返回",
                         color = AppleRed,
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                }
+                Text(
+                    text = "${team.zhName} (${team.name})",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                )
+                Surface(
+                    onClick = onCloseAll,
+                    color = AppleCanvas,
+                    shape = RoundedCornerShape(999.dp),
+                ) {
+                    Text(
+                        text = "关闭",
+                        color = InkSecondary,
+                        fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                     )
                 }
             }
-        }
+            HorizontalDivider(color = AppleDivider)
+
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -693,6 +733,8 @@ fun TeamDetailBottomSheet(
             }
         }
         item { Spacer(modifier = Modifier.height(16.dp)) }
+            }
+        }
     }
 }
 

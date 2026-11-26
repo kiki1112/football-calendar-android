@@ -90,6 +90,7 @@ class AppContainer(application: Application) {
     )
 
     val fixtureRepository = FixtureRepository(
+        appContext = application,
         matchDao = database.matchDao(),
         standingDao = database.standingDao(),
         teamDao = database.teamDao(),

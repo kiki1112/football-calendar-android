@@ -13,6 +13,7 @@ import com.footballcalendar.app.FootballCalendarApplication
 import com.footballcalendar.app.data.preferences.UserPreferences
 import com.footballcalendar.app.model.CompetitionCatalog
 import com.footballcalendar.app.model.DataSourceMode
+import com.footballcalendar.app.model.LiveBroadcastAlert
 import com.footballcalendar.app.model.LiveMatchDetail
 import com.footballcalendar.app.model.MatchH2HBundle
 import com.footballcalendar.app.model.MatchItem
@@ -71,11 +72,14 @@ data class CalendarUiState(
     val isLoadingTeamHistory: Boolean = false,
     val starPlayers: List<StarPlayer> = emptyList(),
     val selectedStarPlayer: StarPlayer? = null,
+    val selectedPlayerMatches: List<MatchItem> = emptyList(),
+    val isLoadingPlayerHistory: Boolean = false,
     val isSearchingPlayer: Boolean = false,
     val prefs: UserPreferences = UserPreferences(),
     val isSyncing: Boolean = false,
     val recentChanges: List<ScheduleChange> = emptyList(),
     val bannerMessage: String? = null,
+    val liveBroadcastAlert: LiveBroadcastAlert? = null,
     val selectedMatchDetail: MatchItem? = null,
     val selectedMatchLiveDetail: LiveMatchDetail? = null,
     val selectedMatchH2H: MatchH2HBundle? = null,
@@ -105,6 +109,8 @@ private data class UiInteractionState(
     val selectedLeagueFilter: String? = null,
     val selectedStandingsLeague: String = "PL",
     val selectedStarPlayer: StarPlayer? = null,
+    val selectedPlayerMatches: List<MatchItem> = emptyList(),
+    val isLoadingPlayerHistory: Boolean = false,
     val selectedTeamDetail: TeamDetailInfo? = null,
     val selectedTeamHistory: List<MatchItem> = emptyList(),
     val isLoadingTeamDetail: Boolean = false,
@@ -113,6 +119,7 @@ private data class UiInteractionState(
     val isSyncing: Boolean = false,
     val recentChanges: List<ScheduleChange> = emptyList(),
     val bannerMessage: String? = null,
+    val liveBroadcastAlert: LiveBroadcastAlert? = null,
     val selectedMatchDetail: MatchItem? = null,
     val selectedMatchLiveDetail: LiveMatchDetail? = null,
     val selectedMatchH2H: MatchH2HBundle? = null,
@@ -294,11 +301,14 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
             isLoadingTeamHistory = ui.isLoadingTeamHistory,
             starPlayers = core.mergedPlayers,
             selectedStarPlayer = ui.selectedStarPlayer,
+            selectedPlayerMatches = ui.selectedPlayerMatches,
+            isLoadingPlayerHistory = ui.isLoadingPlayerHistory,
             isSearchingPlayer = ui.isSearchingPlayer,
             prefs = prefs,
             isSyncing = ui.isSyncing,
             recentChanges = ui.recentChanges,
             bannerMessage = ui.bannerMessage,
+            liveBroadcastAlert = ui.liveBroadcastAlert,
             selectedMatchDetail = latestSelectedMatch,
             selectedMatchLiveDetail = ui.selectedMatchLiveDetail,
             selectedMatchH2H = ui.selectedMatchH2H,
@@ -617,11 +627,14 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
     fun closeTeamDetail() = closeAllModals()
 
     fun openPlayerDetail(player: StarPlayer, pushToStack: Boolean = true) {
-        val enrichedCrests = player.copy(
-            clubCrestUrl = TeamAssetCatalog.resolveTeamLogo(player.clubName, player.clubCrestUrl)
-                .ifBlank { TeamAssetCatalog.resolveTeamLogo(player.clubZhName) },
-            nationalCrestUrl = TeamAssetCatalog.resolveTeamLogo(player.nationalName, player.nationalCrestUrl)
-                .ifBlank { TeamAssetCatalog.resolveTeamLogo(player.nationalZhName) },
+        val withBio = if (player.bio.isNotBlank()) player else player.copy(
+            bio = TeamAssetCatalog.buildStructuredPlayerBio(player),
+        )
+        val enrichedCrests = withBio.copy(
+            clubCrestUrl = TeamAssetCatalog.resolveTeamLogo(withBio.clubName, withBio.clubCrestUrl)
+                .ifBlank { TeamAssetCatalog.resolveTeamLogo(withBio.clubZhName) },
+            nationalCrestUrl = TeamAssetCatalog.resolveTeamLogo(withBio.nationalName, withBio.nationalCrestUrl)
+                .ifBlank { TeamAssetCatalog.resolveTeamLogo(withBio.nationalZhName) },
         )
         if (pushToStack) {
             val top = modalStack.lastOrNull()
@@ -636,6 +649,13 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
         teamHistoryJob?.cancel()
         teamHistoryJob = null
 
+        val localMatches = uiState.value.allMatches.filter { m ->
+            (enrichedCrests.clubZhName.isNotBlank() && m.involvesTeam(enrichedCrests.clubZhName)) ||
+                (enrichedCrests.clubName.isNotBlank() && m.involvesTeam(enrichedCrests.clubName)) ||
+                (enrichedCrests.nationalZhName.isNotBlank() && m.involvesTeam(enrichedCrests.nationalZhName)) ||
+                (enrichedCrests.nationalName.isNotBlank() && m.involvesTeam(enrichedCrests.nationalName))
+        }.sortedByDescending { it.utcDate }
+
         uiInteraction.update {
             it.copy(
                 selectedMatchDetail = null,
@@ -646,20 +666,56 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
                 isLoadingTeamDetail = false,
                 isLoadingTeamHistory = false,
                 selectedStarPlayer = enrichedCrests,
+                selectedPlayerMatches = localMatches,
+                isLoadingPlayerHistory = enrichedCrests.clubName.isNotBlank() || enrichedCrests.nationalName.isNotBlank(),
                 canNavigateBackModal = modalStack.size > 1,
             )
         }
-        if (enrichedCrests.portraitUrl.isBlank()) {
-            viewModelScope.launch {
-                val updated = withContext(Dispatchers.IO) {
-                    fixtureRepo.enrichSinglePlayerPortrait(enrichedCrests)
+        viewModelScope.launch {
+            val updated = withContext(Dispatchers.IO) {
+                fixtureRepo.enrichSinglePlayerPortrait(enrichedCrests)
+            }
+            uiInteraction.update { st ->
+                if (st.selectedStarPlayer?.id == enrichedCrests.id) {
+                    st.copy(selectedStarPlayer = updated)
+                } else {
+                    st
+                }
+            }
+        }
+        if (enrichedCrests.clubName.isNotBlank() || enrichedCrests.nationalName.isNotBlank()) {
+            teamHistoryJob = viewModelScope.launch {
+                val extraList = withContext(Dispatchers.IO) {
+                    val out = mutableListOf<MatchItem>()
+                    if (enrichedCrests.clubName.isNotBlank()) {
+                        fixtureRepo.fetchTeamHistoryAndDetail(
+                            teamName = enrichedCrests.clubName,
+                            teamZhName = enrichedCrests.clubZhName,
+                            teamId = 0,
+                            compCode = enrichedCrests.competitionCode,
+                            crest = enrichedCrests.clubCrestUrl,
+                        ).getOrNull()?.second?.let { out.addAll(it) }
+                    }
+                    if (enrichedCrests.nationalName.isNotBlank()) {
+                        fixtureRepo.fetchTeamHistoryAndDetail(
+                            teamName = enrichedCrests.nationalName,
+                            teamZhName = enrichedCrests.nationalZhName,
+                            teamId = 0,
+                            compCode = "INT",
+                            crest = enrichedCrests.nationalCrestUrl,
+                        ).getOrNull()?.second?.let { out.addAll(it) }
+                    }
+                    out
                 }
                 uiInteraction.update { st ->
-                    if (st.selectedStarPlayer?.id == enrichedCrests.id) {
-                        st.copy(selectedStarPlayer = updated)
-                    } else {
-                        st
-                    }
+                    if (st.selectedStarPlayer?.id != enrichedCrests.id) return@update st
+                    val merged = (st.selectedPlayerMatches + extraList)
+                        .distinctBy { "${it.utcDate.take(10)}|${it.homeTeamZhName}|${it.awayTeamZhName}" }
+                        .sortedByDescending { it.utcDate }
+                    st.copy(
+                        selectedPlayerMatches = merged,
+                        isLoadingPlayerHistory = false,
+                    )
                 }
             }
         }
@@ -756,9 +812,39 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
                 isLoadingTeamDetail = false,
                 isLoadingTeamHistory = false,
                 selectedStarPlayer = null,
+                selectedPlayerMatches = emptyList(),
+                isLoadingPlayerHistory = false,
                 canNavigateBackModal = false,
             )
         }
+    }
+
+    fun dismissLiveBroadcast() {
+        uiInteraction.update { it.copy(liveBroadcastAlert = null) }
+    }
+
+    fun openMatchById(matchId: String) {
+        val m = uiState.value.allMatches.firstOrNull { it.id == matchId } ?: return
+        openMatchDetail(m)
+    }
+
+    fun sendTestLiveBroadcast() {
+        val target = uiState.value.heroMatch ?: uiState.value.allMatches.firstOrNull()
+        val sent = notificationHelper.notifyTestBroadcast(target)
+        val preview = LiveBroadcastAlert(
+            id = "test-${System.currentTimeMillis()}",
+            match = target ?: MatchItem(
+                id = "test-0", competitionCode = "PL", competitionName = "Premier League", competitionZhName = "英超",
+                matchday = 1, stage = "REGULAR_SEASON", utcDate = Instant.now().toString(),
+                status = MatchStatus.LIVE, homeTeamId = 0, homeTeamName = "Liverpool FC", homeTeamShortName = "Liverpool",
+                homeTeamZhName = "利物浦", awayTeamId = 0, awayTeamName = "Manchester City FC", awayTeamShortName = "Man City",
+                awayTeamZhName = "曼城", homeScore = 2, awayScore = 1, venue = "Anfield",
+                lastUpdatedUtc = Instant.now().toString(),
+            ),
+            headline = "⚽ 实时播报推送测试：${target?.let { "${it.homeTeamZhName} vs ${it.awayTeamZhName}" } ?: "足球赛事日历"}",
+            detail = if (sent) "系统通知栏与顶部实时横幅已触发（点击可直接进入赛况）" else "已在应用内触发实时横幅（如需系统通知栏推送请授予通知权限）",
+        )
+        uiInteraction.update { it.copy(liveBroadcastAlert = preview) }
     }
 
     fun clearBanner() {
@@ -812,13 +898,18 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
                     fixtureRepo.ensureSeededIfEmpty()
                 }
                 while (isActive) {
-                    val updatedCount = withContext(Dispatchers.IO) {
-                        fixtureRepo.refreshLiveScoresEspnFirst().getOrDefault(0)
+                    val alerts = withContext(Dispatchers.IO) {
+                        fixtureRepo.pollLiveUpdatesWithBroadcasts().getOrDefault(emptyList())
                     }
-                    if (updatedCount > 0) {
+                    if (alerts.isNotEmpty()) {
+                        uiInteraction.update { it.copy(liveBroadcastAlert = alerts.first()) }
+                        if (prefsRepo.currentPreferences().notifyOnLiveBroadcast) {
+                            notificationHelper.notifyLiveBroadcasts(alerts)
+                        }
                         NextMatchWidgetProvider.updateAllWidgets(getApplication())
                     }
-                    delay(15_000L)
+                    val hasLive = uiState.value.filteredMatches.any { it.status.isLive }
+                    delay(if (hasLive) 8_000L else 15_000L)
                 }
             }
             uiState.value.selectedMatchDetail?.let { openMatch ->
@@ -920,6 +1011,7 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
         notifyOnScheduleChange: Boolean,
         notifyBeforeMinutes: Int,
         autoSyncSystemCalendar: Boolean,
+        notifyOnLiveBroadcast: Boolean = true,
     ) {
         viewModelScope.launch {
             prefsRepo.updateDisplayAndNotificationSettings(
@@ -927,6 +1019,7 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
                 notifyOnScheduleChange = notifyOnScheduleChange,
                 notifyBeforeMinutes = notifyBeforeMinutes,
                 autoSyncSystemCalendar = autoSyncSystemCalendar,
+                notifyOnLiveBroadcast = notifyOnLiveBroadcast,
             )
             if (autoSyncSystemCalendar) {
                 syncMatchesToSystemCalendarNow()

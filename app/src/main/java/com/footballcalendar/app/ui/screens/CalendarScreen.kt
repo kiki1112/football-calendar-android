@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -879,6 +880,21 @@ private fun AppleMatchCard(
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                             )
                         }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = MatchTimeFormatter.formatMonthDayTime(match.utcDate),
+                            style = TextStyle(
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Medium,
+                                fontFeatureSettings = "tnum",
+                            ),
+                            color = InkSecondary,
+                        )
+                        Text(
+                            text = "北京时间",
+                            fontSize = 9.sp,
+                            color = InkTertiary,
+                        )
                     } else {
                         Text(
                             text = kickoff,
@@ -1020,8 +1036,10 @@ fun MatchDetailBottomSheet(
     homeStanding: StandingEntry?,
     awayStanding: StandingEntry?,
     relatedPlayers: List<StarPlayer>,
+    isFullScreen: Boolean = false,
     canNavigateBack: Boolean = false,
     onNavigateBack: () -> Unit = {},
+    onCloseAll: () -> Unit = {},
     onSetTimelineView: (Boolean) -> Unit = {},
     onToggleOnlyGoals: () -> Unit = {},
     onClickTeam: (enName: String, zhName: String, compCode: String, crest: String, teamId: Int) -> Unit,
@@ -1033,15 +1051,74 @@ fun MatchDetailBottomSheet(
     onAddToSystemCalendar: () -> Unit,
     onShareIcs: () -> Unit,
 ) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxWidth()
-            .fillMaxHeight(0.86f)
-            .navigationBarsPadding(),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+    Column(
+        modifier = if (isFullScreen) {
+            Modifier
+                .fillMaxSize()
+                .background(Color.White)
+                .statusBarsPadding()
+                .navigationBarsPadding()
+        } else {
+            Modifier.fillMaxWidth().fillMaxHeight(0.86f).navigationBarsPadding()
+        },
     ) {
-        if (canNavigateBack) {
+        if (isFullScreen) {
+            Surface(color = Color.White) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Surface(
+                        onClick = if (canNavigateBack) onNavigateBack else onCloseAll,
+                        color = AppleCanvas,
+                        shape = RoundedCornerShape(999.dp),
+                    ) {
+                        Text(
+                            text = if (canNavigateBack) "‹ 返回上一页" else "‹ 返回",
+                            color = AppleRed,
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        )
+                    }
+                    Text(
+                        text = "${match.homeTeamZhName} vs ${match.awayTeamZhName}",
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 8.dp).weight(1f),
+                        textAlign = TextAlign.Center,
+                    )
+                    Surface(
+                        onClick = onCloseAll,
+                        color = AppleCanvas,
+                        shape = RoundedCornerShape(999.dp),
+                    ) {
+                        Text(
+                            text = "关闭",
+                            color = InkSecondary,
+                            fontWeight = FontWeight.SemiBold,
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        )
+                    }
+                }
+            }
+            HorizontalDivider(color = AppleDivider)
+        }
+
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            if (!isFullScreen && canNavigateBack) {
             item {
                 Surface(
                     onClick = onNavigateBack,
@@ -1407,6 +1484,7 @@ fun MatchDetailBottomSheet(
             }
         }
         item { Spacer(modifier = Modifier.height(20.dp)) }
+        }
     }
 }
 
@@ -1730,6 +1808,35 @@ private fun MatchLiveDetailSection(
                                                     fontWeight = FontWeight.Medium,
                                                     color = InkPrimary,
                                                 )
+                                            }
+                                        }
+                                    }
+                                }
+                                if (side.substitutes.isNotEmpty()) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text("替补席", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = InkSecondary)
+                                    FlowRow(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                                    ) {
+                                        side.substitutes.forEach { lp ->
+                                            Surface(
+                                                onClick = { onClickLineupPlayer(lp, side) },
+                                                color = AppleCanvas,
+                                                shape = RoundedCornerShape(999.dp),
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                                ) {
+                                                    PlayerPortrait(url = lp.portraitUrl, playerName = lp.zhName, size = 20.dp)
+                                                    Text(
+                                                        text = if (lp.number > 0) "#${lp.number} ${lp.zhName}" else lp.zhName,
+                                                        fontSize = 10.sp,
+                                                        color = InkSecondary,
+                                                    )
+                                                }
                                             }
                                         }
                                     }

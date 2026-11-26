@@ -295,6 +295,14 @@ data class LiveMatchDetail(
     val commentary: List<MatchCommentaryItem> = emptyList(),
 )
 
+data class LiveBroadcastAlert(
+    val id: String,
+    val match: MatchItem,
+    val headline: String,
+    val detail: String,
+    val timestampMillis: Long = System.currentTimeMillis(),
+)
+
 enum class ScheduleChangeType {
     ADDED,
     RESCHEDULED,

@@ -1,14 +1,33 @@
 package com.footballcalendar.app
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
@@ -18,6 +37,7 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -25,6 +45,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -32,13 +53,17 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
@@ -48,6 +73,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.footballcalendar.app.sync.NotificationHelper
 import com.footballcalendar.app.ui.CalendarViewModel
 import com.footballcalendar.app.ui.screens.CalendarScreen
 import com.footballcalendar.app.ui.screens.MatchDetailBottomSheet
@@ -59,9 +85,14 @@ import com.footballcalendar.app.ui.screens.TeamsScreen
 import com.footballcalendar.app.ui.theme.AppleCanvas
 import com.footballcalendar.app.ui.theme.AppleDivider
 import com.footballcalendar.app.ui.theme.AppleRed
+import com.footballcalendar.app.ui.theme.AppleRedBorder
 import com.footballcalendar.app.ui.theme.AppleRedTint
 import com.footballcalendar.app.ui.theme.FootballCalendarTheme
+import com.footballcalendar.app.ui.theme.InkPrimary
+import com.footballcalendar.app.ui.theme.InkSecondary
 import com.footballcalendar.app.ui.theme.InkTertiary
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 
 private enum class AppTab(val route: String, val label: String, val icon: ImageVector) {
     CALENDAR("calendar", "日历", Icons.Filled.CalendarMonth),
@@ -71,8 +102,11 @@ private enum class AppTab(val route: String, val label: String, val icon: ImageV
 }
 
 class MainActivity : ComponentActivity() {
+    private val pendingOpenMatchId = MutableStateFlow<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pendingOpenMatchId.value = intent?.getStringExtra(NotificationHelper.EXTRA_OPEN_MATCH_ID)
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.light(
                 AppleCanvas.toArgb(),
@@ -81,8 +115,19 @@ class MainActivity : ComponentActivity() {
         )
         setContent {
             FootballCalendarTheme {
-                FootballCalendarRoot()
+                val pendingMatchId by pendingOpenMatchId.collectAsStateWithLifecycle()
+                FootballCalendarRoot(
+                    pendingMatchId = pendingMatchId,
+                    onConsumePendingMatchId = { pendingOpenMatchId.value = null },
+                )
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        intent.getStringExtra(NotificationHelper.EXTRA_OPEN_MATCH_ID)?.let { mid ->
+            pendingOpenMatchId.value = mid
         }
     }
 }
@@ -90,6 +135,8 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FootballCalendarRoot(
+    pendingMatchId: String? = null,
+    onConsumePendingMatchId: () -> Unit = {},
     viewModel: CalendarViewModel = viewModel(factory = CalendarViewModel.Factory),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -99,6 +146,37 @@ private fun FootballCalendarRoot(
     val backStack by navController.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route ?: AppTab.CALENDAR.route
     val lifecycleOwner = context as? LifecycleOwner
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { }
+
+    LaunchedEffect(state.prefs.notifyOnLiveBroadcast) {
+        if (state.prefs.notifyOnLiveBroadcast && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
+
+    LaunchedEffect(pendingMatchId, state.allMatches.size) {
+        val mid = pendingMatchId
+        if (!mid.isNullOrBlank() && state.allMatches.isNotEmpty()) {
+            viewModel.openMatchById(mid)
+            onConsumePendingMatchId()
+        }
+    }
+
+    LaunchedEffect(state.liveBroadcastAlert?.id) {
+        if (state.liveBroadcastAlert != null) {
+            delay(9_000L)
+            viewModel.dismissLiveBroadcast()
+        }
+    }
 
     DisposableEffect(lifecycleOwner) {
         val owner = lifecycleOwner
@@ -132,14 +210,22 @@ private fun FootballCalendarRoot(
         }
     }
 
-    val hasModalOpen = state.selectedMatchDetail != null || state.selectedStarPlayer != null || state.selectedTeamDetail != null
+    val selectedMatch = state.selectedMatchDetail
+    val selectedTeam = state.selectedTeamDetail
+    val selectedPlayer = state.selectedStarPlayer
+    val hasPopupModalOpen = selectedMatch != null && !state.canNavigateBackModal && currentRoute == AppTab.CALENDAR.route
     val backdropBlur by animateDpAsState(
-        targetValue = if (hasModalOpen) 18.dp else 0.dp,
+        targetValue = if (hasPopupModalOpen) 18.dp else 0.dp,
         label = "backdropBlur",
     )
 
-    Scaffold(
-        modifier = if (backdropBlur > 0.dp) Modifier.blur(backdropBlur) else Modifier,
+    BackHandler(enabled = selectedMatch != null || selectedTeam != null || selectedPlayer != null) {
+        viewModel.navigateBackModal()
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            modifier = if (backdropBlur > 0.dp) Modifier.blur(backdropBlur) else Modifier,
         containerColor = AppleCanvas,
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         bottomBar = {
@@ -221,6 +307,7 @@ private fun FootballCalendarRoot(
                     onSimulateDemoUpdate = { viewModel.syncNow(simulateDemoChange = true) },
                     onUpdateSyncSettings = viewModel::updateSyncSettings,
                     onUpdateDisplayAndNotifications = viewModel::updateDisplayAndNotificationSettings,
+                    onTestLiveBroadcast = viewModel::sendTestLiveBroadcast,
                     onSyncSystemCalendarNow = viewModel::syncMatchesToSystemCalendarNow,
                     onOpenMatchDetail = { m -> viewModel.openMatchDetail(m) },
                     onOpenTeamDetail = { en, zh, cc, cr, tid -> viewModel.openTeamDetail(en, zh, cc, cr, tid) },
@@ -231,13 +318,8 @@ private fun FootballCalendarRoot(
         }
     }
 
-    val selectedMatch = state.selectedMatchDetail
-    val selectedTeam = state.selectedTeamDetail
-    val selectedPlayer = state.selectedStarPlayer
-
     if (selectedMatch != null) {
         androidx.compose.runtime.key(selectedMatch.id) {
-            val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
             val relatedPlayers = remember(selectedMatch.id, state.starPlayers) {
                 state.starPlayers.filter { p ->
                     (p.clubZhName.isNotBlank() && selectedMatch.involvesTeam(p.clubZhName)) ||
@@ -246,13 +328,61 @@ private fun FootballCalendarRoot(
                         (p.nationalName.isNotBlank() && selectedMatch.involvesTeam(p.nationalName))
                 }
             }
-            ModalBottomSheet(
-                onDismissRequest = viewModel::closeAllModals,
-                sheetState = sheetState,
-                containerColor = Color.White.copy(alpha = 0.94f),
-                scrimColor = Color(0x4A1C1C1E),
-                shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-            ) {
+            val openMatchPopupOnHome = !state.canNavigateBackModal && currentRoute == AppTab.CALENDAR.route
+            if (openMatchPopupOnHome) {
+                val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+                ModalBottomSheet(
+                    onDismissRequest = viewModel::closeAllModals,
+                    sheetState = sheetState,
+                    containerColor = Color.White.copy(alpha = 0.94f),
+                    scrimColor = Color(0x4A1C1C1E),
+                    shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+                ) {
+                    MatchDetailBottomSheet(
+                        match = selectedMatch,
+                        liveDetail = state.selectedMatchLiveDetail,
+                        isLoadingLiveDetail = state.isLoadingMatchDetail,
+                        liveDetailNote = state.matchDetailNote,
+                        useTimelineView = state.useTimelineView,
+                        onlyGoalsFilter = state.onlyGoalsFilter,
+                        h2hBundle = state.selectedMatchH2H,
+                        isLoadingH2H = state.isLoadingMatchH2H,
+                        favoriteTeams = state.prefs.favoriteTeams,
+                        isWatchlisted = selectedMatch.id in state.prefs.watchlistMatchIds,
+                        homeStanding = state.standingFor(selectedMatch.competitionCode, selectedMatch.homeTeamZhName, selectedMatch.homeTeamName),
+                        awayStanding = state.standingFor(selectedMatch.competitionCode, selectedMatch.awayTeamZhName, selectedMatch.awayTeamName),
+                        relatedPlayers = relatedPlayers,
+                        isFullScreen = false,
+                        canNavigateBack = state.canNavigateBackModal,
+                        onNavigateBack = viewModel::navigateBackModal,
+                        onCloseAll = viewModel::closeAllModals,
+                        onSetTimelineView = viewModel::setTimelineView,
+                        onToggleOnlyGoals = viewModel::toggleOnlyGoals,
+                        onClickTeam = { en, zh, cc, cr, tid -> viewModel.openTeamDetail(en, zh, cc, cr, tid) },
+                        onClickMatch = { m -> viewModel.openMatchDetail(m) },
+                        onClickPlayer = { p -> viewModel.openPlayerDetail(p) },
+                        onClickLineupPlayer = { lp, side ->
+                            viewModel.openLineupPlayerByName(
+                                name = lp.name,
+                                zhName = lp.zhName,
+                                number = lp.number,
+                                portraitUrl = lp.portraitUrl,
+                                teamName = side.teamName,
+                                teamZhName = side.teamZhName,
+                                compCode = selectedMatch.competitionCode,
+                            )
+                        },
+                        onToggleFavorite = viewModel::toggleFavoriteTeam,
+                        onToggleWatchlist = { viewModel.toggleWatchlistMatch(selectedMatch.id) },
+                        onAddToSystemCalendar = { context.startActivity(viewModel.buildAddToCalendarIntent(selectedMatch)) },
+                        onShareIcs = {
+                            viewModel.buildShareIcsIntent(listOf(selectedMatch), "match_${selectedMatch.id}.ics")?.let { intent ->
+                                context.startActivity(Intent.createChooser(intent, "分享赛程日历 (.ics)"))
+                            }
+                        },
+                    )
+                }
+            } else {
                 MatchDetailBottomSheet(
                     match = selectedMatch,
                     liveDetail = state.selectedMatchLiveDetail,
@@ -267,8 +397,10 @@ private fun FootballCalendarRoot(
                     homeStanding = state.standingFor(selectedMatch.competitionCode, selectedMatch.homeTeamZhName, selectedMatch.homeTeamName),
                     awayStanding = state.standingFor(selectedMatch.competitionCode, selectedMatch.awayTeamZhName, selectedMatch.awayTeamName),
                     relatedPlayers = relatedPlayers,
+                    isFullScreen = true,
                     canNavigateBack = state.canNavigateBackModal,
                     onNavigateBack = viewModel::navigateBackModal,
+                    onCloseAll = viewModel::closeAllModals,
                     onSetTimelineView = viewModel::setTimelineView,
                     onToggleOnlyGoals = viewModel::toggleOnlyGoals,
                     onClickTeam = { en, zh, cc, cr, tid -> viewModel.openTeamDetail(en, zh, cc, cr, tid) },
@@ -298,65 +430,120 @@ private fun FootballCalendarRoot(
         }
     } else if (selectedTeam != null) {
         androidx.compose.runtime.key(selectedTeam.zhName, selectedTeam.name) {
-            val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-            ModalBottomSheet(
-                onDismissRequest = viewModel::closeAllModals,
-                sheetState = sheetState,
-                containerColor = Color.White.copy(alpha = 0.94f),
-                scrimColor = Color(0x4A1C1C1E),
-                shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-            ) {
-                val teamStanding = state.standingFor(selectedTeam.competitionCode, selectedTeam.zhName, selectedTeam.name)
-                    ?: state.teamRankByName[selectedTeam.zhName]
-                    ?: state.teamRankByName[selectedTeam.name]
-                val combinedTeamMatches = remember(selectedTeam.zhName, selectedTeam.name, state.selectedTeamHistory, state.allMatches) {
-                    val base = state.selectedTeamHistory + state.allMatches.filter { m ->
-                        m.involvesTeam(selectedTeam.zhName) || m.involvesTeam(selectedTeam.name)
-                    }
-                    base.distinctBy { "${it.utcDate.take(10)}|${it.homeTeamZhName}|${it.awayTeamZhName}" }
+            val teamStanding = state.standingFor(selectedTeam.competitionCode, selectedTeam.zhName, selectedTeam.name)
+                ?: state.teamRankByName[selectedTeam.zhName]
+                ?: state.teamRankByName[selectedTeam.name]
+            val combinedTeamMatches = remember(selectedTeam.zhName, selectedTeam.name, state.selectedTeamHistory, state.allMatches) {
+                val base = state.selectedTeamHistory + state.allMatches.filter { m ->
+                    m.involvesTeam(selectedTeam.zhName) || m.involvesTeam(selectedTeam.name)
                 }
-                TeamDetailBottomSheet(
-                    team = selectedTeam,
-                    standing = teamStanding,
-                    matches = combinedTeamMatches,
-                    isLoading = state.isLoadingTeamDetail,
-                    isLoadingHistory = state.isLoadingTeamHistory,
-                    isFavorite = selectedTeam.zhName in state.prefs.favoriteTeams || selectedTeam.name in state.prefs.favoriteTeams,
-                    canNavigateBack = state.canNavigateBackModal,
-                    onNavigateBack = viewModel::navigateBackModal,
-                    onToggleFavorite = { viewModel.toggleFavoriteTeam(selectedTeam.zhName) },
-                    onClickSquadMember = { member -> viewModel.openSquadMemberAsPlayer(member, selectedTeam) },
-                    onClickMatch = { m -> viewModel.openMatchDetail(m) },
-                )
+                base.distinctBy { "${it.utcDate.take(10)}|${it.homeTeamZhName}|${it.awayTeamZhName}" }
             }
+            TeamDetailBottomSheet(
+                team = selectedTeam,
+                standing = teamStanding,
+                matches = combinedTeamMatches,
+                isLoading = state.isLoadingTeamDetail,
+                isLoadingHistory = state.isLoadingTeamHistory,
+                isFavorite = selectedTeam.zhName in state.prefs.favoriteTeams || selectedTeam.name in state.prefs.favoriteTeams,
+                canNavigateBack = state.canNavigateBackModal,
+                onNavigateBack = viewModel::navigateBackModal,
+                onCloseAll = viewModel::closeAllModals,
+                onToggleFavorite = { viewModel.toggleFavoriteTeam(selectedTeam.zhName) },
+                onClickSquadMember = { member -> viewModel.openSquadMemberAsPlayer(member, selectedTeam) },
+                onClickMatch = { m -> viewModel.openMatchDetail(m) },
+            )
         }
     } else if (selectedPlayer != null) {
         androidx.compose.runtime.key(selectedPlayer.id) {
-            val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-            ModalBottomSheet(
-                onDismissRequest = viewModel::closeAllModals,
-                sheetState = sheetState,
-                containerColor = Color.White.copy(alpha = 0.94f),
-                scrimColor = Color(0x4A1C1C1E),
-                shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            val playerMatches = remember(
+                selectedPlayer.id,
+                state.selectedPlayerMatches,
+                state.allMatches,
             ) {
-                val playerMatches = state.allMatches.filter { m ->
+                val fallbackLocal = state.allMatches.filter { m ->
                     (selectedPlayer.clubZhName.isNotBlank() && m.involvesTeam(selectedPlayer.clubZhName)) ||
                         (selectedPlayer.clubName.isNotBlank() && m.involvesTeam(selectedPlayer.clubName)) ||
                         (selectedPlayer.nationalZhName.isNotBlank() && m.involvesTeam(selectedPlayer.nationalZhName)) ||
                         (selectedPlayer.nationalName.isNotBlank() && m.involvesTeam(selectedPlayer.nationalName))
-                }.sortedByDescending { it.utcDate }
+                }
+                (state.selectedPlayerMatches + fallbackLocal)
+                    .distinctBy { "${it.utcDate.take(10)}|${it.homeTeamZhName}|${it.awayTeamZhName}" }
+                    .sortedByDescending { it.utcDate }
+            }
 
-                PlayerDetailSheet(
-                    player = selectedPlayer,
-                    isFavorite = selectedPlayer.id in state.prefs.favoritePlayers,
-                    upcomingMatches = playerMatches,
-                    canNavigateBack = state.canNavigateBackModal,
-                    onNavigateBack = viewModel::navigateBackModal,
-                    onToggleFavorite = { viewModel.toggleFavoritePlayer(selectedPlayer.id) },
-                    onClickTeam = { en, zh, cc, cr -> viewModel.openTeamDetail(en, zh, cc, cr) },
-                    onClickMatch = { m -> viewModel.openMatchDetail(m) },
-                )
+            PlayerDetailSheet(
+                player = selectedPlayer,
+                isFavorite = selectedPlayer.id in state.prefs.favoritePlayers,
+                upcomingMatches = playerMatches,
+                isLoadingHistory = state.isLoadingPlayerHistory,
+                canNavigateBack = state.canNavigateBackModal,
+                onNavigateBack = viewModel::navigateBackModal,
+                onCloseAll = viewModel::closeAllModals,
+                onToggleFavorite = { viewModel.toggleFavoritePlayer(selectedPlayer.id) },
+                onClickTeam = { en, zh, cc, cr -> viewModel.openTeamDetail(en, zh, cc, cr) },
+                onClickMatch = { m -> viewModel.openMatchDetail(m) },
+            )
+        }
+    }
+
+        // In-App Real-Time Match Broadcast Floating Banner (top overlay across all screens)
+        val liveAlert = state.liveBroadcastAlert
+        AnimatedVisibility(
+            visible = liveAlert != null,
+            enter = slideInVertically { -it } + fadeIn(),
+            exit = slideOutVertically { -it } + fadeOut(),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .statusBarsPadding()
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+        ) {
+            if (liveAlert != null) {
+                Surface(
+                    onClick = {
+                        viewModel.dismissLiveBroadcast()
+                        viewModel.openMatchDetail(liveAlert.match)
+                    },
+                    color = Color.White,
+                    shape = RoundedCornerShape(18.dp),
+                    shadowElevation = 6.dp,
+                    border = BorderStroke(1.dp, AppleRedBorder),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = liveAlert.headline,
+                                color = AppleRed,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 13.sp,
+                            )
+                            Text(
+                                text = liveAlert.detail,
+                                color = InkPrimary,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        Text(
+                            text = "看直播 ›",
+                            color = AppleRed,
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                        Text(
+                            text = "✕",
+                            color = InkTertiary,
+                            fontSize = 14.sp,
+                            modifier = Modifier
+                                .clickable { viewModel.dismissLiveBroadcast() }
+                                .padding(horizontal = 4.dp, vertical = 2.dp),
+                        )
+                    }
+                }
             }
         }
     }

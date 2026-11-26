@@ -197,29 +197,7 @@ class GitHubPagesFixtureDataSource(
             "请先在设置中填写有效的 HTTPS GitHub Pages 订阅地址"
         }
         val response = apiService.fetchGitHubPagesFeed(normalizedUrl)
-        val matches = response.matches
-            .map { it.toDomain() }
-            .filter { prefs.followedCompetitions.isEmpty() || it.competitionCode in prefs.followedCompetitions }
-
-        val countsByLeague = response.standings.groupingBy { it.competitionCode }.eachCount()
-        val standings = response.standings.map { dto ->
-            dto.toDomain(countsByLeague[dto.competitionCode] ?: 20)
-        }.ifEmpty { MockFixtureDataSource.demoStandings() }
-
-        val players = response.players.map { it.toDomain() }
-            .ifEmpty { TeamAssetCatalog.starPlayers }
-
-        val teams = response.teams.map { it.toDomain() }
-        val nowMs = System.currentTimeMillis()
-        val liveDetails = response.liveDetails.mapValues { (_, dto) -> dto.toDomain(nowMs) }
-
-        return SyncPayload(
-            matches = matches,
-            standings = standings,
-            players = players,
-            teams = teams,
-            liveDetails = liveDetails,
-        )
+        return response.toSyncPayload(prefs.followedCompetitions)
     }
 
     companion object {

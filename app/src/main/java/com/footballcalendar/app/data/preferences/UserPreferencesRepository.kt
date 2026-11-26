@@ -35,6 +35,7 @@ data class UserPreferences(
     val wifiOnlySync: Boolean = false,
     val watchNightGrouping: Boolean = true,
     val notifyOnScheduleChange: Boolean = true,
+    val notifyOnLiveBroadcast: Boolean = true,
     val notifyBeforeMatchMinutes: Int = 30,
     val autoSyncSystemCalendar: Boolean = false,
     val lastSyncUtc: String = "",
@@ -71,6 +72,7 @@ class UserPreferencesRepository(private val context: Context) {
         val WIFI_ONLY_SYNC = booleanPreferencesKey("wifi_only_sync")
         val WATCH_NIGHT_GROUPING = booleanPreferencesKey("watch_night_grouping")
         val NOTIFY_ON_SCHEDULE_CHANGE = booleanPreferencesKey("notify_on_schedule_change")
+        val NOTIFY_ON_LIVE_BROADCAST = booleanPreferencesKey("notify_on_live_broadcast")
         val NOTIFY_BEFORE_MATCH_MINUTES = intPreferencesKey("notify_before_match_minutes")
         val AUTO_SYNC_SYSTEM_CALENDAR = booleanPreferencesKey("auto_sync_system_calendar")
         val LAST_SYNC_UTC = stringPreferencesKey("last_sync_utc")
@@ -96,6 +98,7 @@ class UserPreferencesRepository(private val context: Context) {
             wifiOnlySync = prefs[Keys.WIFI_ONLY_SYNC] ?: false,
             watchNightGrouping = prefs[Keys.WATCH_NIGHT_GROUPING] ?: true,
             notifyOnScheduleChange = prefs[Keys.NOTIFY_ON_SCHEDULE_CHANGE] ?: true,
+            notifyOnLiveBroadcast = prefs[Keys.NOTIFY_ON_LIVE_BROADCAST] ?: true,
             notifyBeforeMatchMinutes = prefs[Keys.NOTIFY_BEFORE_MATCH_MINUTES] ?: 30,
             autoSyncSystemCalendar = prefs[Keys.AUTO_SYNC_SYSTEM_CALENDAR] ?: false,
             lastSyncUtc = prefs[Keys.LAST_SYNC_UTC] ?: "",
@@ -179,12 +182,14 @@ class UserPreferencesRepository(private val context: Context) {
         notifyOnScheduleChange: Boolean,
         notifyBeforeMinutes: Int,
         autoSyncSystemCalendar: Boolean,
+        notifyOnLiveBroadcast: Boolean = true,
     ) {
         context.userPrefsDataStore.edit { prefs ->
             prefs[Keys.WATCH_NIGHT_GROUPING] = watchNightGrouping
             prefs[Keys.NOTIFY_ON_SCHEDULE_CHANGE] = notifyOnScheduleChange
             prefs[Keys.NOTIFY_BEFORE_MATCH_MINUTES] = notifyBeforeMinutes
             prefs[Keys.AUTO_SYNC_SYSTEM_CALENDAR] = autoSyncSystemCalendar
+            prefs[Keys.NOTIFY_ON_LIVE_BROADCAST] = notifyOnLiveBroadcast
         }
     }
 

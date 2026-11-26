@@ -168,4 +168,51 @@ class TeamAssetCatalogTest {
         val wd = parser.decodeFromString(WikidataSparqlResponse.serializer(), wdSample)
         assertEquals(1, wd.results?.bindings?.size)
     }
+
+    @org.junit.Test
+    fun resolveMissingAclLogosAndFlagCdnAndBioFallback() {
+        assertEquals(
+            "https://media.api-sports.io/football/teams/2762.png",
+            com.footballcalendar.app.util.TeamAssetCatalog.resolveTeamLogo("Jeonbuk Hyundai Motors"),
+        )
+        assertEquals(
+            "https://flagcdn.com/w160/cd.png",
+            com.footballcalendar.app.util.TeamAssetCatalog.resolveTeamLogo("DR Congo"),
+        )
+        assertEquals(
+            "https://flagcdn.com/w160/gb-nir.png",
+            com.footballcalendar.app.util.TeamAssetCatalog.resolveTeamLogo("Northern Ireland"),
+        )
+        assertEquals(
+            "米内罗竞技",
+            com.footballcalendar.app.util.TeamLocalization.localizeTeam("Atlético-MG"),
+        )
+        val samplePlayer = com.footballcalendar.app.model.StarPlayer(
+            id = "p-test-1",
+            name = "Erling Haaland",
+            zhName = "哈兰德",
+            clubName = "Manchester City FC",
+            clubZhName = "曼城",
+            clubCrestUrl = "",
+            nationalName = "Norway",
+            nationalZhName = "挪威国家队",
+            nationalCrestUrl = "",
+            positionZh = "前锋",
+            nationalityZh = "挪威",
+            shirtNumber = 9,
+            birthYear = 2000,
+            portraitUrl = "",
+            bio = "",
+            competitionCode = "PL",
+            rank = 1,
+            goals = 15,
+            assists = 3,
+            penalties = 2,
+            playedMatches = 12,
+        )
+        val bio = com.footballcalendar.app.util.TeamAssetCatalog.buildStructuredPlayerBio(samplePlayer)
+        assertTrue(bio.contains("哈兰德"))
+        assertTrue(bio.contains("曼城"))
+        assertTrue(bio.contains("15 粒进球"))
+    }
 }

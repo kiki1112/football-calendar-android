@@ -182,6 +182,20 @@ TEAM_LOGO_MAP: dict[str, str] = {
     "China PR": "https://thumb.wikimedia.org/wikipedia/en/thumb/0/03/China_national_football_team.svg/330px-China_national_football_team.svg.png",
     "Japan": "https://thumb.wikimedia.org/wikipedia/en/thumb/8/84/Japan_national_football_team_crest.svg/330px-Japan_national_football_team_crest.svg.png",
     "South Korea": "https://thumb.wikimedia.org/wikipedia/en/thumb/4/41/South_Korea_national_football_team.svg/330px-South_Korea_national_football_team.svg.png",
+    "Al-Quwa Al-Jawiya": "https://media.api-sports.io/football/teams/8009.png",
+    "Al-Shamal": "https://media.api-sports.io/football/teams/2916.png",
+    "Cong An Ha Noi": "https://media.api-sports.io/football/teams/16400.png",
+    "Daejeon Hana Citizen FC": "https://media.api-sports.io/football/teams/2750.png",
+    "Daejeon Hana Citizen": "https://media.api-sports.io/football/teams/2750.png",
+    "Esteghlal FC": "https://media.api-sports.io/football/teams/2733.png",
+    "Jeonbuk Hyundai Motors": "https://media.api-sports.io/football/teams/2762.png",
+    "Jeonbuk Motors": "https://media.api-sports.io/football/teams/2762.png",
+    "Neftchi Fergana": "https://media.api-sports.io/football/teams/4217.png",
+    "Pakhtakor": "https://media.api-sports.io/football/teams/4220.png",
+    "Shabab Al Ahli": "https://media.api-sports.io/football/teams/2870.png",
+    "Shabab Al-Ahli Dubai": "https://media.api-sports.io/football/teams/2870.png",
+    "Tractor": "https://media.api-sports.io/football/teams/2737.png",
+    "Tractor Sazi": "https://media.api-sports.io/football/teams/2737.png",
 }
 
 STAR_PLAYERS_CATALOG: list[dict[str, Any]] = [
@@ -393,6 +407,38 @@ NATIONAL_IOC_MAP: dict[str, str] = {
     "south korea": "kor", "korea republic": "kor", "韩国": "kor",
 }
 
+FLAGCDN_ISO2_MAP: dict[str, str] = {
+    "afghanistan": "af", "albania": "al", "andorra": "ad", "angola": "ao",
+    "armenia": "am", "azerbaijan": "az", "bangladesh": "bd", "barbados": "bb",
+    "belarus": "by", "benin": "bj", "bolivia": "bo", "bosnia and herzegovina": "ba",
+    "bosnia-herzegovina": "ba", "bulgaria": "bg", "burkina faso": "bf", "burundi": "bi",
+    "cape verde": "cv", "cape verde islands": "cv", "cabo verde": "cv",
+    "central african republic": "cf", "chad": "td", "comoros": "km", "congo": "cg",
+    "congo dr": "cd", "dr congo": "cd", "costa rica": "cr", "cuba": "cu",
+    "curacao": "cw", "cyprus": "cy", "dominican republic": "do", "el salvador": "sv",
+    "equatorial guinea": "gq", "estonia": "ee", "faroe islands": "fo", "finland": "fi",
+    "gabon": "ga", "gambia": "gm", "georgia": "ge", "gibraltar": "gi",
+    "guadeloupe": "gp", "guatemala": "gt", "guinea": "gn", "guinea-bissau": "gw",
+    "haiti": "ht", "honduras": "hn", "hong kong": "hk", "iceland": "is",
+    "indonesia": "id", "ireland": "ie", "republic of ireland": "ie", "israel": "il",
+    "ivory coast": "ci", "cote d'ivoire": "ci", "jamaica": "jm", "jordan": "jo",
+    "kazakhstan": "kz", "kenya": "ke", "korea, south": "kr", "kosovo": "xk",
+    "latvia": "lv", "liberia": "lr", "libya": "ly", "liechtenstein": "li",
+    "lithuania": "lt", "luxembourg": "lu", "madagascar": "mg", "malaysia": "my",
+    "mali": "ml", "malta": "mt", "martinique": "mq", "mauritania": "mr",
+    "moldova": "md", "montenegro": "me", "mozambique": "mz", "namibia": "na",
+    "new zealand": "nz", "nicaragua": "ni", "niger": "ne", "north macedonia": "mk",
+    "northern ireland": "gb-nir", "oman": "om", "pakistan": "pk", "palestine": "ps",
+    "panama": "pa", "philippines": "ph", "russia": "ru", "rwanda": "rw",
+    "saint kitts and nevis": "kn", "saint lucia": "lc", "st lucia": "lc",
+    "san marino": "sm", "sierra leone": "sl", "slovakia": "sk", "slovenia": "si",
+    "somalia": "so", "south africa": "za", "south sudan": "ss", "sudan": "sd",
+    "suriname": "sr", "syria": "sy", "tanzania": "tz", "thailand": "th",
+    "togo": "tg", "trinidad & tobago": "tt", "trinidad and tobago": "tt", "uganda": "ug",
+    "united arab emirates": "ae", "uae": "ae", "vanuatu": "vu", "venezuela": "ve",
+    "vietnam": "vn", "zambia": "zm", "zimbabwe": "zw",
+}
+
 
 def resolve_team_logo(team_name: str, api_crest: str | None = None) -> str:
     if api_crest and api_crest.strip():
@@ -400,10 +446,14 @@ def resolve_team_logo(team_name: str, api_crest: str | None = None) -> str:
     direct = TEAM_LOGO_MAP.get(team_name)
     if direct:
         return direct
-    base = re.sub(r"\s*(U17|U20|U21|U23)\s*$", "", team_name.replace("国家队", "").strip(), flags=re.IGNORECASE).strip().lower()
+    raw_base = re.sub(r"\s*(U17|U19|U20|U21|U23)\s*$", "", team_name.replace("国家队", "").strip(), flags=re.IGNORECASE).strip()
+    base = "".join(c for c in unicodedata.normalize("NFD", raw_base) if unicodedata.category(c) != "Mn").lower()
     ioc = NATIONAL_IOC_MAP.get(base)
     if ioc:
         return f"https://a.espncdn.com/i/teamlogos/countries/500/{ioc}.png"
+    iso2 = FLAGCDN_ISO2_MAP.get(base)
+    if iso2:
+        return f"https://flagcdn.com/w160/{iso2}.png"
     return ""
 
 
@@ -1437,16 +1487,29 @@ def _merge_espn_match(
     espn_index: dict[tuple[str, str], NormalizedMatch],
 ) -> None:
     pair = (_normalize_team_key(nm.homeTeamName), _normalize_team_key(nm.awayTeamName))
+    zh_pair = (nm.homeTeamZhName, nm.awayTeamZhName)
     espn_index[pair] = nm
-    # Check if AF or FD already has this match
+    if nm.homeTeamZhName and nm.awayTeamZhName:
+        espn_index[zh_pair] = nm
+    # Check if AF or FD already has this match (by normalized EN key OR localized ZH key within 36h)
     matched_id = None
     for mid, cur in collected.items():
-        if cur.competitionCode == nm.competitionCode and (
+        same_en = (
             _normalize_team_key(cur.homeTeamName),
             _normalize_team_key(cur.awayTeamName),
-        ) == pair:
-            matched_id = mid
-            break
+        ) == pair
+        same_zh = bool(nm.homeTeamZhName and nm.awayTeamZhName) and (
+            cur.homeTeamZhName,
+            cur.awayTeamZhName,
+        ) == zh_pair
+        if cur.competitionCode == nm.competitionCode and (same_en or same_zh):
+            try:
+                if abs((parse_utc_iso(cur.utcDate) - parse_utc_iso(nm.utcDate)).total_seconds()) <= 36 * 3600:
+                    matched_id = mid
+                    break
+            except Exception:  # noqa: BLE001
+                matched_id = mid
+                break
     if matched_id is None:
         collected[nm.id] = nm
 
@@ -1693,10 +1756,10 @@ def attach_espn_team_ids(teams_by_key: dict[str, dict[str, Any]], slugs: list[st
                 td["crest"] = crest
 
 
-def _fetch_wiki_pageimages_batch(names: list[str]) -> dict[str, str]:
+def _fetch_wiki_pageimages_batch(names: list[str], lang: str = "en") -> dict[str, str]:
     if not names:
         return {}
-    url = "https://en.wikipedia.org/w/api.php?" + urllib.parse.urlencode(
+    url = f"https://{lang}.wikipedia.org/w/api.php?" + urllib.parse.urlencode(
         {
             "action": "query",
             "titles": "|".join(names),
@@ -1711,13 +1774,13 @@ def _fetch_wiki_pageimages_batch(names: list[str]) -> dict[str, str]:
         try:
             payload = fetch_json(
                 url,
-                {"User-Agent": "FootballCalendarSync/5.0 (https://github.com/kiki1112/football-calendar-android)"},
-                timeout_seconds=15,
+                {"User-Agent": "FootballCalendarSync/6.0 (https://github.com/kiki1112/football-calendar-android)"},
+                timeout_seconds=12,
             )
             break
         except Exception:  # noqa: BLE001
             if attempt == 0:
-                time.sleep(0.25)
+                time.sleep(0.2)
             else:
                 return {}
     q = payload.get("query") or {}
@@ -1737,6 +1800,33 @@ def _fetch_wiki_pageimages_batch(names: list[str]) -> dict[str, str]:
         if hit:
             resolved[raw] = hit
     return resolved
+
+
+def _fetch_enwiki_search_portrait(name: str) -> tuple[str, str]:
+    url = "https://en.wikipedia.org/w/api.php?" + urllib.parse.urlencode(
+        {
+            "action": "query",
+            "generator": "search",
+            "gsrsearch": f"{name} footballer",
+            "gsrlimit": "1",
+            "prop": "pageimages",
+            "pithumbsize": "300",
+            "format": "json",
+        }
+    )
+    try:
+        payload = fetch_json(
+            url,
+            {"User-Agent": "FootballCalendarSync/6.0 (https://github.com/kiki1112/football-calendar-android)"},
+            timeout_seconds=8,
+        )
+        for page in ((payload.get("query") or {}).get("pages") or {}).values():
+            src = ((page.get("thumbnail") or {}).get("source") or "").strip()
+            if src:
+                return name, src
+    except Exception:  # noqa: BLE001
+        pass
+    return name, ""
 
 
 def _fetch_wikidata_portraits_batch(names: list[str]) -> dict[str, str]:
@@ -1826,20 +1916,39 @@ def enrich_missing_portraits(
     resolved: dict[str, str] = {}
     with ThreadPoolExecutor(max_workers=5) as pool:
         for res in pool.map(
-            lambda ch: _fetch_wiki_pageimages_batch(ch) if ch else {},
+            lambda ch: _fetch_wiki_pageimages_batch(ch, "en") if ch else {},
             chunks,
         ):
             if res:
                 resolved.update(res)
 
-    # Stage 2: Wikidata SPARQL matching legal passport names / altLabels (e.g. "Pedro González López" -> Pedri)
-    still_missing = [nm for nm in missing_names if nm not in resolved][:1000]
+    # Stage 2: Multi-language Wikipedia titles (es/de/pt/fr/it/ja) for accented & domestic stars
+    for wiki_lang in ("es", "de", "fr", "pt", "it", "ja"):
+        lang_missing = [nm for nm in missing_names if nm not in resolved][:1800]
+        if not lang_missing:
+            break
+        l_chunks = [lang_missing[i : i + 45] for i in range(0, len(lang_missing), 45)]
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            for res in pool.map(lambda ch, lg=wiki_lang: _fetch_wiki_pageimages_batch(ch, lg), l_chunks):
+                if res:
+                    resolved.update(res)
+
+    # Stage 3: Wikidata SPARQL matching legal passport names / altLabels (e.g. "Pedro González López" -> Pedri)
+    still_missing = [nm for nm in missing_names if nm not in resolved][:1200]
     if still_missing:
         wd_chunks = [still_missing[i : i + 50] for i in range(0, len(still_missing), 50)]
         with ThreadPoolExecutor(max_workers=2) as pool:
             for res in pool.map(_fetch_wikidata_portraits_batch, wd_chunks):
                 if res:
                     resolved.update(res)
+
+    # Stage 4: Fuzzy Wikipedia footballer search for remaining hyphenated / alternative names
+    search_targets = [nm for nm in missing_names if nm not in resolved][:260]
+    if search_targets:
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            for nm, src in pool.map(_fetch_enwiki_search_portrait, search_targets):
+                if src:
+                    resolved[nm] = src
 
     if not resolved:
         return
@@ -2158,11 +2267,22 @@ def collect_data(
     scorers_list: list[dict[str, Any]] = []
     errors: list[str] = []
 
-    # Restore cached team squads/details so we don't repeat expensive calls unnecessarily
+    # Restore cached team squads/details & preserve previously resolved player portraits
+    cached_portraits_by_name: dict[str, str] = {}
+    for cp in existing.get("players") or []:
+        c_url = (cp.get("portraitUrl") or "").strip()
+        c_nm = (cp.get("name") or "").strip().lower()
+        if c_nm and c_url:
+            cached_portraits_by_name[c_nm] = c_url
     for td in existing.get("teams") or []:
         t_key = _normalize_team_key(td.get("name") or "")
         if t_key:
             teams_by_key[t_key] = td
+        for sq in td.get("squad") or []:
+            c_url = (sq.get("portraitUrl") or "").strip()
+            c_nm = (sq.get("name") or "").strip().lower()
+            if c_nm and c_url:
+                cached_portraits_by_name.setdefault(c_nm, c_url)
 
     # Carry forward recent AF & ESPN fixtures within [-21d, +21d]
     cutoff_old = (now - dt.timedelta(days=21)).isoformat()
@@ -2342,8 +2462,11 @@ def collect_data(
 
             # Attach espnSlug & espnEventId onto existing FD/AF matches + sync fresher score
             for mid, m in list(collected.items()):
+                if m.id.startswith("espn-"):
+                    continue
                 pair = (_normalize_team_key(m.homeTeamName), _normalize_team_key(m.awayTeamName))
-                em = espn_events_index.get(pair)
+                zh_pair = (m.homeTeamZhName, m.awayTeamZhName)
+                em = espn_events_index.get(pair) or (espn_events_index.get(zh_pair) if m.homeTeamZhName and m.awayTeamZhName else None)
                 if em:
                     try:
                         same_window = abs((parse_utc_iso(em.utcDate) - parse_utc_iso(m.utcDate)).total_seconds()) <= 36 * 3600
@@ -2360,6 +2483,27 @@ def collect_data(
                         awayScore=em.awayScore if em.status in {"LIVE", "PAUSED", "FINISHED"} and em.awayScore is not None else m.awayScore,
                         status=em.status if em.status in {"LIVE", "PAUSED", "FINISHED"} else m.status,
                     )
+
+            # Prune redundant carried-over ESPN duplicates that match an FD/AF match in the same window
+            non_espn = [m for m in collected.values() if not m.id.startswith("espn-")]
+            for mid in [k for k in list(collected.keys()) if k.startswith("espn-")]:
+                em = collected[mid]
+                em_pair = (_normalize_team_key(em.homeTeamName), _normalize_team_key(em.awayTeamName))
+                for fd_m in non_espn:
+                    if fd_m.competitionCode != em.competitionCode:
+                        continue
+                    fd_pair = (_normalize_team_key(fd_m.homeTeamName), _normalize_team_key(fd_m.awayTeamName))
+                    same_teams = (em_pair == fd_pair) or (
+                        bool(em.homeTeamZhName and em.awayTeamZhName)
+                        and (em.homeTeamZhName, em.awayTeamZhName) == (fd_m.homeTeamZhName, fd_m.awayTeamZhName)
+                    )
+                    if same_teams:
+                        try:
+                            if abs((parse_utc_iso(em.utcDate) - parse_utc_iso(fd_m.utcDate)).total_seconds()) <= 36 * 3600:
+                                del collected[mid]
+                                break
+                        except Exception:  # noqa: BLE001
+                            pass
 
             # ESPN 2026 Standings for non-FD leagues (UEL, UECL, ACL, J1, AL, MLS)
             existing_st_codes = {row["competitionCode"] for row in standings}
@@ -2417,6 +2561,20 @@ def collect_data(
         standings = generate_demo_standings()
     final_players = enrich_players(scorers_list)
     final_teams = list(teams_by_key.values())
+    # Re-apply previously resolved portraits and ensure team crests resolve via TEAM_LOGO_MAP / flags
+    for p in final_players:
+        if not p.get("portraitUrl"):
+            nm_key = (p.get("name") or "").strip().lower()
+            if nm_key in cached_portraits_by_name:
+                p["portraitUrl"] = cached_portraits_by_name[nm_key]
+    for td in final_teams:
+        if not td.get("crest"):
+            td["crest"] = resolve_team_logo(td.get("name") or "", "")
+        for sq in td.get("squad") or []:
+            if not sq.get("portraitUrl"):
+                nm_key = (sq.get("name") or "").strip().lower()
+                if nm_key in cached_portraits_by_name:
+                    sq["portraitUrl"] = cached_portraits_by_name[nm_key]
     if enable_espn:
         try:
             enrich_missing_portraits(final_teams, final_players)

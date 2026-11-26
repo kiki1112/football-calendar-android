@@ -1,6 +1,7 @@
 package com.footballcalendar.app.util
 
 import com.footballcalendar.app.model.StarPlayer
+import java.text.Normalizer
 
 /**
  * Verified Wikimedia PNG/JPG asset catalog for major clubs, national teams, and star players.
@@ -85,6 +86,138 @@ object TeamAssetCatalog {
         "日本国家队" to "https://thumb.wikimedia.org/wikipedia/en/thumb/8/84/Japan_national_football_team_crest.svg/330px-Japan_national_football_team_crest.svg.png",
         "South Korea" to "https://thumb.wikimedia.org/wikipedia/en/thumb/4/41/South_Korea_national_football_team.svg/330px-South_Korea_national_football_team.svg.png",
         "韩国国家队" to "https://thumb.wikimedia.org/wikipedia/en/thumb/4/41/South_Korea_national_football_team.svg/330px-South_Korea_national_football_team.svg.png",
+        // ACL Elite & Asian Clubs missing ESPN default logos
+        "Al-Quwa Al-Jawiya" to "https://media.api-sports.io/football/teams/8009.png",
+        "巴格达空军" to "https://media.api-sports.io/football/teams/8009.png",
+        "Al-Shamal" to "https://media.api-sports.io/football/teams/2916.png",
+        "沙马尔" to "https://media.api-sports.io/football/teams/2916.png",
+        "Cong An Ha Noi" to "https://media.api-sports.io/football/teams/16400.png",
+        "河内公安" to "https://media.api-sports.io/football/teams/16400.png",
+        "Daejeon Hana Citizen FC" to "https://media.api-sports.io/football/teams/2750.png",
+        "Daejeon Hana Citizen" to "https://media.api-sports.io/football/teams/2750.png",
+        "大田市民" to "https://media.api-sports.io/football/teams/2750.png",
+        "Esteghlal FC" to "https://media.api-sports.io/football/teams/2733.png",
+        "德黑兰独立" to "https://media.api-sports.io/football/teams/2733.png",
+        "Jeonbuk Hyundai Motors" to "https://media.api-sports.io/football/teams/2762.png",
+        "Jeonbuk Motors" to "https://media.api-sports.io/football/teams/2762.png",
+        "全北现代" to "https://media.api-sports.io/football/teams/2762.png",
+        "Neftchi Fergana" to "https://media.api-sports.io/football/teams/4217.png",
+        "费尔干纳油工" to "https://media.api-sports.io/football/teams/4217.png",
+        "Pakhtakor" to "https://media.api-sports.io/football/teams/4220.png",
+        "塔什干棉农" to "https://media.api-sports.io/football/teams/4220.png",
+        "Shabab Al Ahli" to "https://media.api-sports.io/football/teams/2870.png",
+        "Shabab Al-Ahli Dubai" to "https://media.api-sports.io/football/teams/2870.png",
+        "迪拜国民青年" to "https://media.api-sports.io/football/teams/2870.png",
+        "Tractor" to "https://media.api-sports.io/football/teams/2737.png",
+        "Tractor Sazi" to "https://media.api-sports.io/football/teams/2737.png",
+        "大不里士拖拉机" to "https://media.api-sports.io/football/teams/2737.png",
+    )
+
+    private val flagCdnIso2ByKey: Map<String, String> = mapOf(
+        "afghanistan" to "af", "阿富汗" to "af",
+        "albania" to "al", "阿尔巴尼亚" to "al",
+        "andorra" to "ad", "安道尔" to "ad",
+        "angola" to "ao", "安哥拉" to "ao",
+        "armenia" to "am", "亚美尼亚" to "am",
+        "azerbaijan" to "az", "阿塞拜疆" to "az",
+        "bangladesh" to "bd", "孟加拉国" to "bd",
+        "barbados" to "bb", "巴巴多斯" to "bb",
+        "belarus" to "by", "白俄罗斯" to "by",
+        "benin" to "bj", "贝宁" to "bj",
+        "bolivia" to "bo", "玻利维亚" to "bo",
+        "bosnia and herzegovina" to "ba", "bosnia-herzegovina" to "ba", "波黑" to "ba",
+        "bulgaria" to "bg", "保加利亚" to "bg",
+        "burkina faso" to "bf", "布基纳法索" to "bf",
+        "burundi" to "bi", "布隆迪" to "bi",
+        "cape verde" to "cv", "cape verde islands" to "cv", "cabo verde" to "cv", "佛得角" to "cv",
+        "central african republic" to "cf", "中非" to "cf",
+        "chad" to "td", "乍得" to "td",
+        "comoros" to "km", "科摩罗" to "km",
+        "congo" to "cg", "刚果" to "cg", "刚果共和国" to "cg",
+        "congo dr" to "cd", "dr congo" to "cd", "民主刚果" to "cd", "刚果民主共和国" to "cd",
+        "costa rica" to "cr", "哥斯达黎加" to "cr",
+        "cuba" to "cu", "古巴" to "cu",
+        "curacao" to "cw", "库拉索" to "cw",
+        "cyprus" to "cy", "塞浦路斯" to "cy",
+        "dominican republic" to "do", "多米尼加" to "do",
+        "el salvador" to "sv", "萨尔瓦多" to "sv",
+        "equatorial guinea" to "gq", "赤道几内亚" to "gq",
+        "estonia" to "ee", "爱沙尼亚" to "ee",
+        "faroe islands" to "fo", "法罗群岛" to "fo",
+        "finland" to "fi", "芬兰" to "fi",
+        "gabon" to "ga", "加蓬" to "ga",
+        "gambia" to "gm", "冈比亚" to "gm",
+        "georgia" to "ge", "格鲁吉亚" to "ge",
+        "gibraltar" to "gi", "直布罗陀" to "gi",
+        "guadeloupe" to "gp", "瓜德罗普" to "gp",
+        "guatemala" to "gt", "危地马拉" to "gt",
+        "guinea" to "gn", "几内亚" to "gn",
+        "guinea-bissau" to "gw", "几内亚比绍" to "gw",
+        "haiti" to "ht", "海地" to "ht",
+        "honduras" to "hn", "洪都拉斯" to "hn",
+        "hong kong" to "hk", "中国香港" to "hk",
+        "iceland" to "is", "冰岛" to "is",
+        "indonesia" to "id", "印度尼西亚" to "id",
+        "ireland" to "ie", "republic of ireland" to "ie", "爱尔兰" to "ie",
+        "israel" to "il", "以色列" to "il",
+        "ivory coast" to "ci", "cote d'ivoire" to "ci", "科特迪瓦" to "ci",
+        "jamaica" to "jm", "牙买加" to "jm",
+        "jordan" to "jo", "约旦" to "jo",
+        "kazakhstan" to "kz", "哈萨克斯坦" to "kz",
+        "kenya" to "ke", "肯尼亚" to "ke",
+        "korea, south" to "kr", "south korea" to "kr",
+        "kosovo" to "xk", "科索沃" to "xk",
+        "latvia" to "lv", "拉脱维亚" to "lv",
+        "liberia" to "lr", "利比里亚" to "lr",
+        "libya" to "ly", "利比亚" to "ly",
+        "liechtenstein" to "li", "列支敦士登" to "li",
+        "lithuania" to "lt", "立陶宛" to "lt",
+        "luxembourg" to "lu", "卢森堡" to "lu",
+        "madagascar" to "mg", "马达加斯加" to "mg",
+        "malaysia" to "my", "马来西亚" to "my",
+        "mali" to "ml", "马里" to "ml",
+        "malta" to "mt", "马耳他" to "mt",
+        "martinique" to "mq", "马提尼克" to "mq",
+        "mauritania" to "mr", "毛里塔尼亚" to "mr",
+        "moldova" to "md", "摩尔多瓦" to "md",
+        "montenegro" to "me", "黑山" to "me",
+        "mozambique" to "mz", "莫桑比克" to "mz",
+        "namibia" to "na", "纳米比亚" to "na",
+        "new zealand" to "nz", "新西兰" to "nz",
+        "nicaragua" to "ni", "尼加拉瓜" to "ni",
+        "niger" to "ne", "尼日尔" to "ne",
+        "north macedonia" to "mk", "北马其顿" to "mk",
+        "northern ireland" to "gb-nir", "北爱尔兰" to "gb-nir",
+        "oman" to "om", "阿曼" to "om",
+        "pakistan" to "pk", "巴基斯坦" to "pk",
+        "palestine" to "ps", "巴勒斯坦" to "ps",
+        "panama" to "pa", "巴拿马" to "pa",
+        "philippines" to "ph", "菲律宾" to "ph",
+        "russia" to "ru", "俄罗斯" to "ru",
+        "rwanda" to "rw", "卢旺达" to "rw",
+        "saint kitts and nevis" to "kn", "圣基茨和尼维斯" to "kn",
+        "saint lucia" to "lc", "st lucia" to "lc", "圣卢西亚" to "lc",
+        "san marino" to "sm", "圣马力诺" to "sm",
+        "sierra leone" to "sl", "塞拉利昂" to "sl",
+        "slovakia" to "sk", "斯洛伐克" to "sk",
+        "slovenia" to "si", "斯洛文尼亚" to "si",
+        "somalia" to "so", "索马里" to "so",
+        "south africa" to "za", "南非" to "za",
+        "south sudan" to "ss", "南苏丹" to "ss",
+        "sudan" to "sd", "苏丹" to "sd",
+        "suriname" to "sr", "苏里南" to "sr",
+        "syria" to "sy", "叙利亚" to "sy",
+        "tanzania" to "tz", "坦桑尼亚" to "tz",
+        "thailand" to "th", "泰国" to "th",
+        "togo" to "tg", "多哥" to "tg",
+        "trinidad & tobago" to "tt", "trinidad and tobago" to "tt", "特立尼达和多巴哥" to "tt",
+        "uganda" to "ug", "乌干达" to "ug",
+        "united arab emirates" to "ae", "uae" to "ae", "阿联酋" to "ae",
+        "vanuatu" to "vu", "瓦努阿图" to "vu",
+        "venezuela" to "ve", "委内瑞拉" to "ve",
+        "vietnam" to "vn", "越南" to "vn",
+        "zambia" to "zm", "赞比亚" to "zm",
+        "zimbabwe" to "zw", "津巴布韦" to "zw",
     )
 
     private val nationalIocByKey: Map<String, String> = mapOf(
@@ -136,13 +269,51 @@ object TeamAssetCatalog {
     fun resolveTeamLogo(teamName: String, apiCrest: String? = null): String {
         if (!apiCrest.isNullOrBlank()) return apiCrest.trim()
         logoByKey[teamName]?.let { return it }
-        val base = teamName
+        val baseRaw = teamName
             .replace("国家队", "")
-            .replace(Regex("\\s*(U17|U20|U21|U23)\\s*$", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\s*(U17|U19|U20|U21|U23)\\s*$", RegexOption.IGNORE_CASE), "")
             .trim()
+        val base = Normalizer.normalize(baseRaw, Normalizer.Form.NFD)
+            .replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
             .lowercase()
-        val ioc = nationalIocByKey[base]
-        return if (ioc != null) "https://a.espncdn.com/i/teamlogos/countries/500/$ioc.png" else ""
+        nationalIocByKey[base]?.let { ioc ->
+            return "https://a.espncdn.com/i/teamlogos/countries/500/$ioc.png"
+        }
+        flagCdnIso2ByKey[base]?.let { iso2 ->
+            return "https://flagcdn.com/w160/$iso2.png"
+        }
+        return ""
+    }
+
+    fun buildStructuredPlayerBio(player: StarPlayer): String {
+        if (player.bio.isNotBlank()) return player.bio
+        val agePart = if (player.birthYear in 1965..2012) {
+            val age = java.time.Year.now().value - player.birthYear
+            "${player.birthYear}年出生（${age}岁）"
+        } else {
+            "一线队注册球员"
+        }
+        val clubPart = when {
+            player.clubZhName.isNotBlank() -> {
+                val numTag = if (player.shirtNumber > 0) "身穿${player.shirtNumber}号球衣" else "一线队成员"
+                "现效力于${player.clubZhName}（${player.clubName}），${numTag}"
+            }
+            else -> "目前入选${player.nationalZhName.ifBlank { "职业俱乐部" }}大名单"
+        }
+        val natPart = player.nationalZhName.takeIf { it.isNotBlank() }?.let { "，具备${it}国字号比赛经验" } ?: ""
+        val roleDesc = when {
+            player.positionZh.contains("门") -> "负责球队最后一道防线守护，具备门线扑救与出球组织能力。"
+            player.positionZh.contains("后卫") || player.positionZh.contains("边卫") -> "承担球队防线盯防、协防与由守转攻衔接职责。"
+            player.positionZh.contains("中场") || player.positionZh.contains("前腰") || player.positionZh.contains("后腰") -> "承担中场控球调度、攻防转换与前场串联职责。"
+            player.positionZh.contains("前锋") || player.positionZh.contains("边锋") -> "活跃于前场进攻线，主责跑位突破、创造机会与禁区终结。"
+            else -> "活跃于一线队多线赛事轮换阵容。"
+        }
+        val statsPart = if (player.goals > 0 || player.assists > 0) {
+            "本赛季赛事统计：已贡献 ${player.goals} 粒进球与 ${player.assists} 次助攻。"
+        } else {
+            ""
+        }
+        return "${player.zhName}（${player.name}），${agePart}，司职${player.positionZh.ifBlank { "球员" }}，${clubPart}${natPart}。${roleDesc}${statsPart}".trim()
     }
 
     val starPlayers: List<StarPlayer> = listOf(

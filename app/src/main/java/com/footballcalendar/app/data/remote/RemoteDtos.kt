@@ -28,7 +28,37 @@ data class GitHubFeedResponse(
     val players: List<GitHubFeedPlayerDto> = emptyList(),
     val teams: List<GitHubFeedTeamDto> = emptyList(),
     val liveDetails: Map<String, GitHubFeedLiveDetailDto> = emptyMap(),
-)
+) {
+    fun toDomainMatches(followedCompetitions: Set<String>): List<MatchItem> = matches
+        .map { it.toDomain() }
+        .filter { followedCompetitions.isEmpty() || it.competitionCode in followedCompetitions }
+
+    fun toDomainStandings(): List<StandingEntry> {
+        val countsByLeague = standings.groupingBy { it.competitionCode }.eachCount()
+        return standings.map { dto ->
+            dto.toDomain(countsByLeague[dto.competitionCode] ?: 20)
+        }.ifEmpty { MockFixtureDataSource.demoStandings() }
+    }
+
+    fun toDomainPlayers(): List<StarPlayer> =
+        players.map { it.toDomain() }.ifEmpty { TeamAssetCatalog.starPlayers }
+
+    fun toDomainTeams(): List<TeamDetailInfo> = teams.map { it.toDomain() }
+
+    fun toDomainLiveDetails(nowMillis: Long): Map<String, LiveMatchDetail> =
+        liveDetails.mapValues { (_, dto) -> dto.toDomain(nowMillis) }
+
+    fun toSyncPayload(followedCompetitions: Set<String>): SyncPayload {
+        val nowMs = System.currentTimeMillis()
+        return SyncPayload(
+            matches = toDomainMatches(followedCompetitions),
+            standings = toDomainStandings(),
+            players = toDomainPlayers(),
+            teams = toDomainTeams(),
+            liveDetails = toDomainLiveDetails(nowMs),
+        )
+    }
+}
 
 @Serializable
 data class GitHubFeedLiveDetailDto(
