@@ -86,5 +86,9 @@ class TeamAssetCatalogTest {
             "PLAYOFF" to "季后/淘汰附加赛区",
             TeamLocalization.localizeEspnZone("Finals Series", "AL", 3, 12),
         )
+        assertEquals("比尔森胜利", TeamLocalization.localizeTeam("Plzen"))
+        assertTrue(TeamAssetCatalog.resolveTeamLogo("Norway").endsWith("/nor.png"))
+        assertTrue(TeamAssetCatalog.resolveTeamLogo("埃及国家队").endsWith("/egy.png"))
+        assertEquals("PL", CompetitionCatalog.findByNameOrAlias("English Premier League")?.code)
     }
 }

@@ -87,7 +87,7 @@ fun TeamsScreen(
     onToggleFavoriteTeam: (String) -> Unit,
     onToggleFavoritePlayer: (String) -> Unit,
     onOpenPlayerDetail: (StarPlayer) -> Unit,
-    onClosePlayerDetail: () -> Unit,
+    onOpenTeamDetail: (enName: String, zhName: String, compCode: String, crest: String) -> Unit,
     onSearchExternalPlayer: (String) -> Unit,
     onOpenMatchDetail: (MatchItem) -> Unit,
 ) {
@@ -282,6 +282,7 @@ fun TeamsScreen(
                         player = player,
                         isFavorite = player.id in state.prefs.favoritePlayers,
                         onClick = { onOpenPlayerDetail(player) },
+                        onClickTeam = { en, zh, cc, cr -> onOpenTeamDetail(en, zh, cc, cr) },
                         onToggleFavorite = { onToggleFavoritePlayer(player.id) },
                     )
                 }
@@ -339,6 +340,14 @@ fun TeamsScreen(
                         teamDetail = teamDetail,
                         standing = standing,
                         teamMatches = teamMatches,
+                        onOpenTeam = {
+                            onOpenTeamDetail(
+                                teamDetail?.name ?: standing?.teamName ?: activeTeamName,
+                                activeTeamName,
+                                teamDetail?.competitionCode ?: standing?.competitionCode ?: "",
+                                teamDetail?.crest ?: standing?.teamCrest ?: "",
+                            )
+                        },
                         onOpenMatch = onOpenMatchDetail,
                     )
                 }
@@ -438,8 +447,13 @@ fun TeamsScreen(
                                             FilterChip(
                                                 selected = isFav,
                                                 onClick = {
-                                                    onToggleFavoriteTeam(zh)
                                                     activeTeamName = zh
+                                                    onOpenTeamDetail(
+                                                        en,
+                                                        zh,
+                                                        comp.code,
+                                                        TeamAssetCatalog.resolveTeamLogo(en),
+                                                    )
                                                 },
                                                 label = {
                                                     Text(if (en.equals(zh, true)) zh else "$zh ($en)", fontSize = 11.sp)
@@ -447,8 +461,10 @@ fun TeamsScreen(
                                                 leadingIcon = {
                                                     Icon(
                                                         if (isFav) Icons.Filled.Star else Icons.Outlined.StarBorder,
-                                                        contentDescription = null,
-                                                        modifier = Modifier.size(15.dp),
+                                                        contentDescription = "关注或查看球队",
+                                                        modifier = Modifier
+                                                            .size(15.dp)
+                                                            .clickable { onToggleFavoriteTeam(zh) },
                                                     )
                                                 },
                                             )
@@ -462,36 +478,6 @@ fun TeamsScreen(
             }
         }
     }
-
-    val detailPlayer = state.selectedStarPlayer
-    if (detailPlayer != null) {
-        val playerSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        ModalBottomSheet(
-            onDismissRequest = onClosePlayerDetail,
-            sheetState = playerSheetState,
-            containerColor = Color.White.copy(alpha = 0.94f),
-            scrimColor = Color(0x4A1C1C1E),
-            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-        ) {
-            val playerMatches = state.allMatches.filter { m ->
-                (detailPlayer.clubZhName.isNotBlank() && m.involvesTeam(detailPlayer.clubZhName)) ||
-                    (detailPlayer.clubName.isNotBlank() && m.involvesTeam(detailPlayer.clubName)) ||
-                    (detailPlayer.nationalZhName.isNotBlank() && m.involvesTeam(detailPlayer.nationalZhName)) ||
-                    (detailPlayer.nationalName.isNotBlank() && m.involvesTeam(detailPlayer.nationalName))
-            }.sortedBy { it.utcDate }
-
-            PlayerDetailSheet(
-                player = detailPlayer,
-                isFavorite = detailPlayer.id in state.prefs.favoritePlayers,
-                upcomingMatches = playerMatches,
-                onToggleFavorite = { onToggleFavoritePlayer(detailPlayer.id) },
-                onClickMatch = { match ->
-                    onClosePlayerDetail()
-                    onOpenMatchDetail(match)
-                },
-            )
-        }
-    }
 }
 
 @Composable
@@ -499,6 +485,7 @@ private fun PlayerRankCard(
     player: StarPlayer,
     isFavorite: Boolean,
     onClick: () -> Unit,
+    onClickTeam: (enName: String, zhName: String, compCode: String, crest: String) -> Unit,
     onToggleFavorite: () -> Unit,
 ) {
     Surface(
@@ -571,7 +558,16 @@ private fun PlayerRankCard(
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (player.clubZhName.isNotBlank()) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    onClickTeam(player.clubName, player.clubZhName, player.competitionCode, player.clubCrestUrl)
+                                }
+                                .padding(vertical = 2.dp, horizontal = 2.dp),
+                        ) {
                             TeamCrest(url = player.clubCrestUrl, teamName = player.clubZhName, size = 18.dp)
                             Text(
                                 text = if (player.clubName.isNotBlank() && !player.clubName.equals(player.clubZhName, true)) {
@@ -580,7 +576,29 @@ private fun PlayerRankCard(
                                     player.clubZhName
                                 },
                                 fontSize = 11.sp,
-                                color = InkPrimary,
+                                color = AppleRed,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                    if (player.nationalZhName.isNotBlank()) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    onClickTeam(player.nationalName, player.nationalZhName, "INT", player.nationalCrestUrl)
+                                }
+                                .padding(vertical = 2.dp, horizontal = 2.dp),
+                        ) {
+                            TeamCrest(url = player.nationalCrestUrl, teamName = player.nationalZhName, size = 16.dp)
+                            Text(
+                                text = player.nationalZhName,
+                                fontSize = 11.sp,
+                                color = InkSecondary,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
@@ -606,6 +624,7 @@ private fun TeamProfileSummaryCard(
     teamDetail: TeamDetailInfo?,
     standing: StandingEntry?,
     teamMatches: List<MatchItem>,
+    onOpenTeam: () -> Unit,
     onOpenMatch: (MatchItem) -> Unit,
 ) {
     val logoUrl = teamDetail?.crest?.ifBlank { null }
@@ -621,7 +640,15 @@ private fun TeamProfileSummaryCard(
         shape = RoundedCornerShape(20.dp),
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .clickable(onClick = onOpenTeam)
+                    .padding(vertical = 2.dp),
+            ) {
                 TeamCrest(url = logoUrl, teamName = teamName, size = 48.dp)
                 Column(modifier = Modifier.weight(1f)) {
                     BilingualTextColumn(
@@ -634,12 +661,12 @@ private fun TeamProfileSummaryCard(
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = if (standing != null) {
-                            "${CompetitionCatalog.zhNameOrFallback(standing.competitionCode, standing.competitionCode)} No.${standing.rank} · ${standing.points} 分 · 净胜 ${standing.goalDifference}"
+                            "${CompetitionCatalog.zhNameOrFallback(standing.competitionCode, standing.competitionCode)} No.${standing.rank} · ${standing.points} 分 · 点击看全队档案与战绩 ›"
                         } else {
-                            "共关联 ${teamMatches.size} 场近期与未来赛程"
+                            "共关联 ${teamMatches.size} 场赛程 · 点击看全队档案与历史战绩 ›"
                         },
                         style = MaterialTheme.typography.bodySmall,
-                        color = InkSecondary,
+                        color = AppleRed,
                     )
                 }
                 if (standing != null) {
@@ -711,11 +738,14 @@ private fun TeamProfileSummaryCard(
 }
 
 @Composable
-private fun PlayerDetailSheet(
+fun PlayerDetailSheet(
     player: StarPlayer,
     isFavorite: Boolean,
     upcomingMatches: List<MatchItem>,
+    canNavigateBack: Boolean = false,
+    onNavigateBack: () -> Unit = {},
     onToggleFavorite: () -> Unit,
+    onClickTeam: (enName: String, zhName: String, compCode: String, crest: String) -> Unit = { _, _, _, _ -> },
     onClickMatch: (MatchItem) -> Unit,
 ) {
     Column(
@@ -727,6 +757,21 @@ private fun PlayerDetailSheet(
             .padding(horizontal = 20.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+        if (canNavigateBack) {
+            Surface(
+                onClick = onNavigateBack,
+                color = AppleCanvas,
+                shape = RoundedCornerShape(999.dp),
+            ) {
+                Text(
+                    text = "‹ 返回上一页",
+                    color = AppleRed,
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                )
+            }
+        }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             PlayerPortrait(url = player.portraitUrl, playerName = player.zhName, size = 76.dp)
             Column(modifier = Modifier.weight(1f)) {
@@ -764,28 +809,44 @@ private fun PlayerDetailSheet(
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             if (player.clubZhName.isNotBlank()) {
-                Surface(color = AppleCanvas, shape = RoundedCornerShape(12.dp), modifier = Modifier.weight(1f)) {
+                Surface(
+                    onClick = {
+                        onClickTeam(player.clubName, player.clubZhName, player.competitionCode, player.clubCrestUrl)
+                    },
+                    color = AppleCanvas,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.weight(1f),
+                ) {
                     Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TeamCrest(url = player.clubCrestUrl, teamName = player.clubZhName, size = 28.dp)
-                        BilingualTextColumn(zhName = player.clubZhName, enName = player.clubName, zhFontSize = 13.sp, enFontSize = 9.sp)
+                        BilingualTextColumn(zhName = player.clubZhName, enName = player.clubName, zhFontSize = 13.sp, enFontSize = 9.sp, modifier = Modifier.weight(1f))
+                        Text("›", color = AppleRed, fontWeight = FontWeight.Bold)
                     }
                 }
             }
             if (player.nationalZhName.isNotBlank()) {
-                Surface(color = AppleCanvas, shape = RoundedCornerShape(12.dp), modifier = Modifier.weight(1f)) {
+                Surface(
+                    onClick = {
+                        onClickTeam(player.nationalName, player.nationalZhName, "INT", player.nationalCrestUrl)
+                    },
+                    color = AppleCanvas,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.weight(1f),
+                ) {
                     Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TeamCrest(url = player.nationalCrestUrl, teamName = player.nationalZhName, size = 28.dp)
-                        BilingualTextColumn(zhName = player.nationalZhName, enName = player.nationalName, zhFontSize = 13.sp, enFontSize = 9.sp)
+                        BilingualTextColumn(zhName = player.nationalZhName, enName = player.nationalName, zhFontSize = 13.sp, enFontSize = 9.sp, modifier = Modifier.weight(1f))
+                        Text("›", color = AppleRed, fontWeight = FontWeight.Bold)
                     }
                 }
             }
         }
 
-        Text("关联俱乐部与国家队近期赛程", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+        Text("关联俱乐部与国家队近期赛程与历史", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
         if (upcomingMatches.isEmpty()) {
-            Text("当前同步周期内暂无该球员所属球队赛程", style = MaterialTheme.typography.bodySmall, color = InkTertiary)
+            Text("当前同步周期内暂无该球员所属球队赛程，可点击上方球队查看完整历史战绩", style = MaterialTheme.typography.bodySmall, color = InkTertiary)
         } else {
-            upcomingMatches.take(5).forEach { m ->
+            upcomingMatches.take(8).forEach { m ->
                 Surface(
                     onClick = { onClickMatch(m) },
                     color = AppleCanvas,
@@ -801,7 +862,12 @@ private fun PlayerDetailSheet(
                             Text("${m.homeTeamZhName} (${m.homeTeamName}) vs ${m.awayTeamZhName} (${m.awayTeamName})", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
                             Text("${m.competitionZhName} · ${MatchTimeFormatter.formatMonthDayTime(m.utcDate)}", style = MaterialTheme.typography.labelSmall, color = InkSecondary)
                         }
-                        Text("查看 ›", color = AppleRed, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                        Text(
+                            text = if (m.homeScore != null && m.awayScore != null) "${m.homeScore}:${m.awayScore} ›" else "查看 ›",
+                            color = AppleRed,
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.labelMedium,
+                        )
                     }
                 }
             }

@@ -14,6 +14,12 @@ import com.footballcalendar.app.model.TeamDetailInfo
 import com.footballcalendar.app.util.TeamAssetCatalog
 import com.footballcalendar.app.util.TeamLocalization
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.intOrNull
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
@@ -523,6 +529,8 @@ data class EspnTeamRosterResponse(
         teamName: String,
         shortName: String,
         crest: String,
+        espnTeamId: String = "",
+        espnSlug: String = "",
     ): TeamDetailInfo = TeamDetailInfo(
         teamId = teamId,
         competitionCode = compCode,
@@ -554,6 +562,8 @@ data class EspnTeamRosterResponse(
                 portraitUrl = a.headshot?.href.orEmpty(),
             )
         },
+        espnTeamId = espnTeamId,
+        espnSlug = espnSlug,
     )
 }
 
@@ -567,4 +577,90 @@ data class EspnRosterAthleteDto(
     val citizenship: String = "",
     val position: EspnPositionDto? = null,
     val headshot: EspnLogoDto? = null,
+)
+
+@Serializable
+data class EspnTeamScheduleResponse(
+    val events: List<EspnScheduleEventDto> = emptyList(),
+)
+
+@Serializable
+data class EspnScheduleEventDto(
+    val id: String = "",
+    val date: String = "",
+    val league: EspnEventLeagueDto? = null,
+    val competitions: List<EspnScheduleCompetitionDto> = emptyList(),
+) {
+    fun toMatchItem(fallbackSlug: String = ""): MatchItem? {
+        if (id.isBlank() || date.isBlank()) return null
+        val slug = league?.slug?.ifBlank { null } ?: fallbackSlug
+        val compCode = EspnLeagueCatalog.codeForSlug(slug) ?: CompetitionCatalog.findByNameOrAlias(league?.name)?.code ?: "OTHER"
+        val meta = CompetitionCatalog.findByCode(compCode)
+        val comp = competitions.firstOrNull() ?: return null
+        val homeC = comp.competitors.firstOrNull { it.homeAway == "home" } ?: comp.competitors.getOrNull(0)
+        val awayC = comp.competitors.firstOrNull { it.homeAway == "away" } ?: comp.competitors.getOrNull(1)
+        val homeName = homeC?.team?.displayName?.ifBlank { homeC.team.name } ?: "TBD"
+        val awayName = awayC?.team?.displayName?.ifBlank { awayC.team.name } ?: "TBD"
+        val (statusEnum, elapsed) = EspnEventDto.parseEspnStatus(comp.status)
+        val showScore = statusEnum.isLive || statusEnum == MatchStatus.FINISHED
+        val homeScore = if (showScore) extractScore(homeC?.score) else null
+        val awayScore = if (showScore) extractScore(awayC?.score) else null
+        val homeLogo = homeC?.team?.logo?.ifBlank { null } ?: homeC?.team?.logos?.firstOrNull()?.href.orEmpty()
+        val awayLogo = awayC?.team?.logo?.ifBlank { null } ?: awayC?.team?.logos?.firstOrNull()?.href.orEmpty()
+
+        return MatchItem(
+            id = "espn-$id",
+            competitionCode = compCode,
+            competitionName = meta?.enName ?: league?.name?.ifBlank { compCode } ?: compCode,
+            competitionZhName = meta?.zhName ?: league?.name?.ifBlank { compCode } ?: compCode,
+            matchday = null,
+            stage = if (compCode in CompetitionCatalog.internationalCodes) "INTERNATIONAL" else "REGULAR_SEASON",
+            utcDate = date,
+            status = statusEnum,
+            homeTeamId = homeC?.team?.id?.toIntOrNull() ?: 0,
+            homeTeamName = homeName,
+            homeTeamShortName = homeC?.team?.shortDisplayName?.ifBlank { homeName } ?: homeName,
+            homeTeamZhName = TeamLocalization.localizeTeam(homeName, homeC?.team?.shortDisplayName),
+            awayTeamId = awayC?.team?.id?.toIntOrNull() ?: 0,
+            awayTeamName = awayName,
+            awayTeamShortName = awayC?.team?.shortDisplayName?.ifBlank { awayName } ?: awayName,
+            awayTeamZhName = TeamLocalization.localizeTeam(awayName, awayC?.team?.shortDisplayName),
+            homeScore = homeScore,
+            awayScore = awayScore,
+            venue = comp.venue?.fullName.orEmpty(),
+            lastUpdatedUtc = DateTimeFormatter.ISO_INSTANT.format(Instant.now()),
+            homeTeamCrest = TeamAssetCatalog.resolveTeamLogo(homeName, homeLogo),
+            awayTeamCrest = TeamAssetCatalog.resolveTeamLogo(awayName, awayLogo),
+            elapsedMinutes = elapsed,
+            espnSlug = slug.ifBlank { null },
+            espnEventId = id,
+        )
+    }
+
+    private fun extractScore(el: JsonElement?): Int? {
+        if (el == null) return null
+        return when (el) {
+            is JsonPrimitive -> el.intOrNull ?: el.doubleOrNull?.toInt() ?: el.contentOrNull?.toIntOrNull()
+            is JsonObject -> {
+                val dv = (el["displayValue"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull()
+                val v = (el["value"] as? JsonPrimitive)?.doubleOrNull?.toInt()
+                dv ?: v
+            }
+            else -> null
+        }
+    }
+}
+
+@Serializable
+data class EspnScheduleCompetitionDto(
+    val status: EspnStatusDto? = null,
+    val venue: EspnVenueDto? = null,
+    val competitors: List<EspnScheduleCompetitorDto> = emptyList(),
+)
+
+@Serializable
+data class EspnScheduleCompetitorDto(
+    val homeAway: String = "",
+    val score: JsonElement? = null,
+    val team: EspnTeamStubDto? = null,
 )

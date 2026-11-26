@@ -45,6 +45,8 @@ data class TeamEntity(
     val coachZhName: String,
     val coachNationality: String,
     val squadJson: String,
+    val espnTeamId: String = "",
+    val espnSlug: String = "",
 ) {
     fun toDomain(json: Json): TeamDetailInfo {
         val parsed = runCatching {
@@ -82,6 +84,8 @@ data class TeamEntity(
                     portraitUrl = m.portraitUrl,
                 )
             },
+            espnTeamId = espnTeamId,
+            espnSlug = espnSlug,
         )
     }
 
@@ -116,6 +120,8 @@ data class TeamEntity(
                     )
                 },
             ),
+            espnTeamId = info.espnTeamId,
+            espnSlug = info.espnSlug,
         )
     }
 }
@@ -124,6 +130,9 @@ data class TeamEntity(
 interface TeamDao {
     @Query("SELECT * FROM teams ORDER BY competitionCode ASC, zhName ASC")
     fun observeAllTeams(): Flow<List<TeamEntity>>
+
+    @Query("SELECT * FROM teams")
+    suspend fun getAllTeamsOnce(): List<TeamEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(items: List<TeamEntity>)

@@ -87,6 +87,14 @@ object CompetitionCatalog {
     fun findByCode(code: String): CompetitionMeta? =
         all.firstOrNull { it.code.equals(code, ignoreCase = true) }
 
+    fun findByNameOrAlias(rawName: String?): CompetitionMeta? {
+        val q = rawName?.trim()?.lowercase().orEmpty()
+        if (q.isEmpty()) return null
+        return all.firstOrNull {
+            q.contains(it.enName.lowercase()) || it.enName.lowercase().contains(q)
+        }
+    }
+
     fun zhNameOrFallback(code: String, fallback: String): String =
         findByCode(code)?.zhName ?: fallback
 }
@@ -213,6 +221,14 @@ data class TeamDetailInfo(
     val coachZhName: String,
     val coachNationality: String,
     val squad: List<SquadMember>,
+    val espnTeamId: String = "",
+    val espnSlug: String = "",
+)
+
+data class MatchH2HBundle(
+    val h2hMatches: List<MatchItem> = emptyList(),
+    val homeRecentMatches: List<MatchItem> = emptyList(),
+    val awayRecentMatches: List<MatchItem> = emptyList(),
 )
 
 data class MatchEventItem(
@@ -234,6 +250,7 @@ data class LineupPlayerItem(
     val zhName: String,
     val number: Int,
     val pos: String,
+    val portraitUrl: String = "",
 )
 
 data class MatchLineupSide(

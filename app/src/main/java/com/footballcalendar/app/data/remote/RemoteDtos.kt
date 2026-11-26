@@ -322,6 +322,8 @@ data class GitHubFeedTeamDto(
     val coachZhName: String = "",
     val coachNationality: String = "",
     val squad: List<GitHubFeedSquadMemberDto> = emptyList(),
+    val espnTeamId: String = "",
+    val espnSlug: String = "",
 ) {
     fun toDomain(): TeamDetailInfo = TeamDetailInfo(
         teamId = teamId,
@@ -355,6 +357,8 @@ data class GitHubFeedTeamDto(
                 portraitUrl = m.portraitUrl,
             )
         },
+        espnTeamId = espnTeamId,
+        espnSlug = espnSlug,
     )
 }
 
@@ -894,4 +898,38 @@ data class WikipediaLanglinksPageDto(
 data class WikipediaLanglinkDto(
     val lang: String = "",
     @SerialName("*") val title: String = "",
+)
+
+@Serializable
+data class WikipediaPageImagesResponse(
+    val query: WikipediaPageImagesQueryDto? = null,
+)
+
+@Serializable
+data class WikipediaPageImagesQueryDto(
+    val normalized: List<WikipediaTitlePairDto> = emptyList(),
+    val redirects: List<WikipediaTitlePairDto> = emptyList(),
+    val pages: Map<String, WikipediaPageImageDto> = emptyMap(),
+)
+
+@Serializable
+data class WikipediaTitlePairDto(
+    val from: String = "",
+    val to: String = "",
+)
+
+@Serializable
+data class WikipediaPageImageDto(
+    val title: String = "",
+    val thumbnail: WikipediaThumbnailDto? = null,
+)
+
+@Serializable
+data class FootballDataHead2HeadResponse(
+    val matches: List<FootballDataMatchDto> = emptyList(),
+)
+
+@Serializable
+data class FootballDataTeamMatchesResponse(
+    val matches: List<FootballDataMatchDto> = emptyList(),
 )

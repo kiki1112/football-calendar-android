@@ -39,6 +39,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -65,6 +66,7 @@ fun SettingsScreen(
     onUpdateDisplayAndNotifications: (Boolean, Boolean, Int, Boolean) -> Unit,
     onSyncSystemCalendarNow: () -> Unit,
     onOpenMatchDetail: (MatchItem) -> Unit,
+    onOpenTeamDetail: (enName: String, zhName: String, compCode: String, crest: String, teamId: Int) -> Unit,
     onBuildShareIcsIntent: (List<MatchItem>, String) -> Intent?,
     onShowMessage: (String) -> Unit,
 ) {
@@ -178,15 +180,42 @@ fun SettingsScreen(
                         )
                     } else {
                         watchlistMatches.take(5).forEach { m ->
-                            Row(
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
                                     .clickable { onOpenMatchDetail(m) }
                                     .padding(vertical = 4.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
                             ) {
-                                Text("${m.homeTeamZhName} (${m.homeTeamName}) vs ${m.awayTeamZhName} (${m.awayTeamName})", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                                Text(MatchTimeFormatter.formatMonthDayTime(m.utcDate), style = MaterialTheme.typography.labelMedium, color = AppleRed)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "${m.homeTeamZhName} (${m.homeTeamName})",
+                                            fontWeight = FontWeight.SemiBold,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = AppleRed,
+                                            modifier = Modifier.clickable {
+                                                onOpenTeamDetail(m.homeTeamName, m.homeTeamZhName, m.competitionCode, m.homeTeamCrest, m.homeTeamId)
+                                            },
+                                        )
+                                        Text(" vs ", style = MaterialTheme.typography.bodySmall, color = InkSecondary)
+                                        Text(
+                                            text = "${m.awayTeamZhName} (${m.awayTeamName})",
+                                            fontWeight = FontWeight.SemiBold,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = AppleRed,
+                                            modifier = Modifier.clickable {
+                                                onOpenTeamDetail(m.awayTeamName, m.awayTeamZhName, m.competitionCode, m.awayTeamCrest, m.awayTeamId)
+                                            },
+                                        )
+                                    }
+                                    Text(MatchTimeFormatter.formatMonthDayTime(m.utcDate), style = MaterialTheme.typography.labelMedium, color = AppleRed)
+                                }
                             }
                         }
                     }

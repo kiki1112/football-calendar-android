@@ -17,6 +17,7 @@ import html
 import json
 import os
 import pathlib
+import re
 import sys
 import time
 import urllib.error
@@ -75,6 +76,7 @@ ESPN_SLUG_BY_CODE: dict[str, str] = {
 }
 ESPN_CODE_BY_SLUG: dict[str, str] = {v: k for k, v in ESPN_SLUG_BY_CODE.items()}
 ESPN_STANDINGS_CODES = ["UEL", "UECL", "ACL", "J1", "AL", "MLS"]
+ESPN_ROSTER_CODES = ["UEL", "UECL", "ACL", "J1", "AL", "MLS", "WC", "EC", "UNL"]
 
 COMPETITION_META: dict[str, dict[str, str]] = {
     "PL": {"name": "Premier League", "zhName": "英超", "country": "英格兰", "color": "#E11D48"},
@@ -344,10 +346,64 @@ class NormalizedMatch:
         return dataclasses.asdict(self)
 
 
+NATIONAL_IOC_MAP: dict[str, str] = {
+    "norway": "nor", "挪威": "nor",
+    "egypt": "egy", "埃及": "egy",
+    "belgium": "bel", "比利时": "bel",
+    "croatia": "cro", "克罗地亚": "cro",
+    "uruguay": "uru", "乌拉圭": "uru",
+    "colombia": "col", "哥伦比亚": "col",
+    "morocco": "mar", "摩洛哥": "mar",
+    "usa": "usa", "united states": "usa", "美国": "usa",
+    "mexico": "mex", "墨西哥": "mex",
+    "switzerland": "sui", "瑞士": "sui",
+    "denmark": "den", "丹麦": "den",
+    "austria": "aut", "奥地利": "aut",
+    "poland": "pol", "波兰": "pol",
+    "sweden": "swe", "瑞典": "swe",
+    "serbia": "srb", "塞尔维亚": "srb",
+    "turkey": "tur", "türkiye": "tur", "turkiye": "tur", "土耳其": "tur",
+    "ukraine": "ukr", "乌克兰": "ukr",
+    "nigeria": "nga", "尼日利亚": "nga",
+    "senegal": "sen", "塞内加尔": "sen",
+    "australia": "aus", "澳大利亚": "aus",
+    "iran": "irn", "ir iran": "irn", "伊朗": "irn",
+    "saudi arabia": "ksa", "沙特阿拉伯": "ksa",
+    "qatar": "qat", "卡塔尔": "qat",
+    "uzbekistan": "uzb", "乌兹别克斯坦": "uzb",
+    "iraq": "irq", "伊拉克": "irq",
+    "canada": "can", "加拿大": "can",
+    "ecuador": "ecu", "厄瓜多尔": "ecu",
+    "chile": "chi", "智利": "chi",
+    "peru": "per", "秘鲁": "per",
+    "paraguay": "par", "巴拉圭": "par",
+    "tunisia": "tun", "突尼斯": "tun",
+    "algeria": "alg", "阿尔及利亚": "alg",
+    "cameroon": "cmr", "喀麦隆": "cmr",
+    "ghana": "gha", "加纳": "gha",
+    "hungary": "hun", "匈牙利": "hun",
+    "scotland": "sco", "苏格兰": "sco",
+    "wales": "wal", "威尔士": "wal",
+    "czech republic": "cze", "czechia": "cze", "捷克": "cze",
+    "romania": "rou", "罗马尼亚": "rou",
+    "greece": "gre", "希腊": "gre",
+    "china": "chn", "china pr": "chn", "中国": "chn",
+    "japan": "jpn", "日本": "jpn",
+    "south korea": "kor", "korea republic": "kor", "韩国": "kor",
+}
+
+
 def resolve_team_logo(team_name: str, api_crest: str | None = None) -> str:
     if api_crest and api_crest.strip():
         return api_crest.strip()
-    return TEAM_LOGO_MAP.get(team_name, "")
+    direct = TEAM_LOGO_MAP.get(team_name)
+    if direct:
+        return direct
+    base = re.sub(r"\s*(U17|U20|U21|U23)\s*$", "", team_name.replace("国家队", "").strip(), flags=re.IGNORECASE).strip().lower()
+    ioc = NATIONAL_IOC_MAP.get(base)
+    if ioc:
+        return f"https://a.espncdn.com/i/teamlogos/countries/500/{ioc}.png"
+    return ""
 
 
 def parse_utc_iso(iso_str: str) -> dt.datetime:
@@ -1223,7 +1279,7 @@ def write_feed_outputs(
     ics_dir.mkdir(parents=True, exist_ok=True)
 
     payload = {
-        "schemaVersion": 4,
+        "schemaVersion": 5,
         "generatedAtUtc": format_utc_iso(now),
         "mode": mode,
         "competitions": [
@@ -1582,14 +1638,153 @@ def fetch_espn_teams_and_rosters(
             "coachName": "",
             "coachZhName": "",
             "coachNationality": "",
+            "espnTeamId": tid,
+            "espnSlug": slug,
             "squad": squad_rows,
         }
 
     with ThreadPoolExecutor(max_workers=6) as pool:
-        for res in pool.map(_pull_roster, targets[:36]):
+        for res in pool.map(_pull_roster, targets[:56]):
             if res:
                 results.append(res)
     return results
+
+
+def attach_espn_team_ids(teams_by_key: dict[str, dict[str, Any]], slugs: list[str]) -> None:
+    """Attach espnTeamId & espnSlug onto every matching team across all leagues."""
+    def _pull_dir(slug: str) -> list[tuple[str, str, str, str]]:
+        out: list[tuple[str, str, str, str]] = []
+        try:
+            payload = fetch_json(
+                f"https://site.api.espn.com/apis/site/v2/sports/soccer/{slug}/teams",
+                {},
+                timeout_seconds=12,
+            )
+            raw_teams = (((payload.get("sports") or [{}])[0].get("leagues") or [{}])[0].get("teams") or [])
+            for item in raw_teams:
+                t = item.get("team") or {}
+                tid = str(t.get("id") or "")
+                t_name = t.get("displayName") or t.get("name") or ""
+                logos = t.get("logos") or []
+                crest = logos[0].get("href", "") if logos else ""
+                if tid and t_name:
+                    out.append((_normalize_team_key(t_name), tid, slug, crest))
+        except Exception:  # noqa: BLE001
+            pass
+        return out
+
+    espn_dir: dict[str, tuple[str, str, str]] = {}
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        for batch in pool.map(_pull_dir, slugs):
+            for tk, tid, slug, crest in batch:
+                if tk and tk not in espn_dir:
+                    espn_dir[tk] = (tid, slug, crest)
+
+    for tk, td in teams_by_key.items():
+        if td.get("espnTeamId") and td.get("espnSlug"):
+            continue
+        hit = espn_dir.get(tk) or espn_dir.get(_normalize_team_key(td.get("shortName") or ""))
+        if hit:
+            tid, slug, crest = hit
+            td["espnTeamId"] = tid
+            td["espnSlug"] = slug
+            if not td.get("crest") and crest:
+                td["crest"] = crest
+
+
+def _fetch_wiki_pageimages_batch(names: list[str]) -> dict[str, str]:
+    if not names:
+        return {}
+    url = "https://en.wikipedia.org/w/api.php?" + urllib.parse.urlencode(
+        {
+            "action": "query",
+            "titles": "|".join(names),
+            "prop": "pageimages",
+            "pithumbsize": "300",
+            "redirects": "1",
+            "format": "json",
+        }
+    )
+    payload: dict[str, Any] = {}
+    for attempt in range(2):
+        try:
+            payload = fetch_json(
+                url,
+                {"User-Agent": "FootballCalendarSync/5.0 (https://github.com/kiki1112/football-calendar-android)"},
+                timeout_seconds=15,
+            )
+            break
+        except Exception:  # noqa: BLE001
+            if attempt == 0:
+                time.sleep(0.25)
+            else:
+                return {}
+    q = payload.get("query") or {}
+    norm_map = {n["from"]: n["to"] for n in (q.get("normalized") or []) if n.get("from") and n.get("to")}
+    redir_map = {r["from"]: r["to"] for r in (q.get("redirects") or []) if r.get("from") and r.get("to")}
+    img_by_title: dict[str, str] = {}
+    for page in (q.get("pages") or {}).values():
+        title = page.get("title") or ""
+        src = (page.get("thumbnail") or {}).get("source") or ""
+        if title and src:
+            img_by_title[title] = src
+    resolved: dict[str, str] = {}
+    for raw in names:
+        step1 = norm_map.get(raw, raw)
+        step2 = redir_map.get(step1, step1)
+        hit = img_by_title.get(step2) or img_by_title.get(step1) or img_by_title.get(raw) or ""
+        if hit:
+            resolved[raw] = hit
+    return resolved
+
+
+def enrich_missing_portraits(
+    teams: list[dict[str, Any]],
+    players: list[dict[str, Any]],
+    max_batches: int = 120,
+) -> None:
+    """Resolve real-person Wikipedia thumbnails in batches of 45 for squads & player rankings."""
+    missing_names: list[str] = []
+    seen: set[str] = set()
+    for p in players:
+        nm = (p.get("name") or "").strip()
+        if nm and not p.get("portraitUrl") and nm not in seen:
+            seen.add(nm)
+            missing_names.append(nm)
+    for td in teams:
+        for sq in td.get("squad") or []:
+            nm = (sq.get("name") or "").strip()
+            if nm and not sq.get("portraitUrl") and nm not in seen:
+                seen.add(nm)
+                missing_names.append(nm)
+
+    if not missing_names:
+        return
+
+    chunks = [missing_names[i : i + 45] for i in range(0, min(len(missing_names), max_batches * 45), 45)]
+    resolved: dict[str, str] = {}
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for res in pool.map(
+            lambda ch: _fetch_wiki_pageimages_batch(ch) if ch else {},
+            chunks,
+        ):
+            if res:
+                resolved.update(res)
+
+    if not resolved:
+        return
+
+    for p in players:
+        if not p.get("portraitUrl"):
+            nm = (p.get("name") or "").strip()
+            if nm in resolved:
+                p["portraitUrl"] = resolved[nm]
+    for td in teams:
+        for sq in td.get("squad") or []:
+            if not sq.get("portraitUrl"):
+                nm = (sq.get("name") or "").strip()
+                if nm in resolved:
+                    sq["portraitUrl"] = resolved[nm]
 
 
 def fetch_espn_summary_detail(match_id: str, slug: str, event_id: str) -> dict[str, Any] | None:
@@ -1774,8 +1969,8 @@ def collect_data(
         if t_key:
             teams_by_key[t_key] = td
 
-    # Carry forward recent AF & ESPN fixtures within [-10d, +21d]
-    cutoff_old = (now - dt.timedelta(days=10)).isoformat()
+    # Carry forward recent AF & ESPN fixtures within [-21d, +21d]
+    cutoff_old = (now - dt.timedelta(days=21)).isoformat()
     for em in existing.get("matches") or []:
         eid = str(em.get("id") or "")
         if (eid.startswith("af-") or eid.startswith("espn-")) and str(em.get("utcDate") or "") >= cutoff_old:
@@ -1975,8 +2170,8 @@ def collect_data(
                     except Exception as exc:  # noqa: BLE001
                         errors.append(f"ESPN {slug} standings: {exc}")
 
-            # ESPN Teams & Rosters for non-FD standings leagues
-            for code in ESPN_STANDINGS_CODES:
+            # ESPN Teams & Rosters for non-FD standings leagues & national teams
+            for code in ESPN_ROSTER_CODES:
                 slug = ESPN_SLUG_BY_CODE.get(code)
                 if slug and code in competitions:
                     try:
@@ -1986,6 +2181,13 @@ def collect_data(
                                 teams_by_key[tk] = td
                     except Exception as exc:  # noqa: BLE001
                         errors.append(f"ESPN {slug} teams: {exc}")
+
+            # Attach espnTeamId & espnSlug across all club/national teams so history & H2H work universally
+            try:
+                all_espn_slugs = [ESPN_SLUG_BY_CODE[c] for c in competitions if c in ESPN_SLUG_BY_CODE]
+                attach_espn_team_ids(teams_by_key, all_espn_slugs)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"ESPN directory attach: {exc}")
 
             # Pre-cache recent finished & live match details from ESPN summary for 0ms open
             recent_targets = [
@@ -2012,13 +2214,20 @@ def collect_data(
 
     if not standings:
         standings = generate_demo_standings()
+    final_players = enrich_players(scorers_list)
+    final_teams = list(teams_by_key.values())
+    if enable_espn:
+        try:
+            enrich_missing_portraits(final_teams, final_players)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"Wikipedia portraits: {exc}")
     if errors:
         print(f"[warn] Partial API fetch warnings: {errors}", file=sys.stderr)
     return (
         list(collected.values()),
         standings,
-        list(teams_by_key.values()),
-        enrich_players(scorers_list),
+        final_teams,
+        final_players,
         live_details,
         "live_api",
     )

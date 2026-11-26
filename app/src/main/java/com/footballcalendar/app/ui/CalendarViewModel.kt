@@ -14,6 +14,7 @@ import com.footballcalendar.app.data.preferences.UserPreferences
 import com.footballcalendar.app.model.CompetitionCatalog
 import com.footballcalendar.app.model.DataSourceMode
 import com.footballcalendar.app.model.LiveMatchDetail
+import com.footballcalendar.app.model.MatchH2HBundle
 import com.footballcalendar.app.model.MatchItem
 import com.footballcalendar.app.model.MatchStatus
 import com.footballcalendar.app.model.ScheduleChange
@@ -63,7 +64,9 @@ data class CalendarUiState(
     val allTeams: List<TeamDetailInfo> = emptyList(),
     val selectedStandingsLeague: String = "PL",
     val selectedTeamDetail: TeamDetailInfo? = null,
+    val selectedTeamHistory: List<MatchItem> = emptyList(),
     val isLoadingTeamDetail: Boolean = false,
+    val isLoadingTeamHistory: Boolean = false,
     val starPlayers: List<StarPlayer> = emptyList(),
     val selectedStarPlayer: StarPlayer? = null,
     val isSearchingPlayer: Boolean = false,
@@ -73,12 +76,20 @@ data class CalendarUiState(
     val bannerMessage: String? = null,
     val selectedMatchDetail: MatchItem? = null,
     val selectedMatchLiveDetail: LiveMatchDetail? = null,
+    val selectedMatchH2H: MatchH2HBundle? = null,
     val isLoadingMatchDetail: Boolean = false,
+    val isLoadingMatchH2H: Boolean = false,
     val matchDetailNote: String? = null,
+    val canNavigateBackModal: Boolean = false,
 ) {
     fun standingFor(competitionCode: String, teamZh: String, teamEn: String): StandingEntry? {
+        val localizedZh = TeamLocalization.localizeTeam(teamEn).ifBlank { teamZh }
         return teamRankByLeagueAndName[competitionCode to teamZh]
+            ?: teamRankByLeagueAndName[competitionCode to localizedZh]
             ?: teamRankByLeagueAndName[competitionCode to teamEn]
+            ?: standingsByLeague[competitionCode]?.firstOrNull { st ->
+                st.teamZhName == teamZh || st.teamZhName == localizedZh || st.teamName.equals(teamEn, true)
+            }
     }
 }
 
@@ -91,16 +102,33 @@ private data class UiInteractionState(
     val selectedStandingsLeague: String = "PL",
     val selectedStarPlayer: StarPlayer? = null,
     val selectedTeamDetail: TeamDetailInfo? = null,
+    val selectedTeamHistory: List<MatchItem> = emptyList(),
     val isLoadingTeamDetail: Boolean = false,
+    val isLoadingTeamHistory: Boolean = false,
     val isSearchingPlayer: Boolean = false,
     val isSyncing: Boolean = false,
     val recentChanges: List<ScheduleChange> = emptyList(),
     val bannerMessage: String? = null,
     val selectedMatchDetail: MatchItem? = null,
     val selectedMatchLiveDetail: LiveMatchDetail? = null,
+    val selectedMatchH2H: MatchH2HBundle? = null,
     val isLoadingMatchDetail: Boolean = false,
+    val isLoadingMatchH2H: Boolean = false,
     val matchDetailNote: String? = null,
+    val canNavigateBackModal: Boolean = false,
 )
+
+private sealed interface ModalSnapshot {
+    data class Match(val match: MatchItem) : ModalSnapshot
+    data class Team(
+        val teamName: String,
+        val teamZhName: String,
+        val teamId: Int,
+        val compCode: String,
+        val crest: String,
+    ) : ModalSnapshot
+    data class Player(val player: StarPlayer) : ModalSnapshot
+}
 
 class CalendarViewModel(application: Application) : AndroidViewModel(application) {
     private val container = (application as FootballCalendarApplication).container
@@ -111,8 +139,11 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
     private val notificationHelper = container.notificationHelper
 
     private val uiInteraction = MutableStateFlow(UiInteractionState())
+    private val modalStack = mutableListOf<ModalSnapshot>()
     private var liveTickerJob: Job? = null
     private var detailPollingJob: Job? = null
+    private var h2hJob: Job? = null
+    private var teamHistoryJob: Job? = null
 
     private val coreDataFlow = combine(
         fixtureRepo.observeAllMatches(),
@@ -250,7 +281,9 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
             allTeams = allTeams,
             selectedStandingsLeague = ui.selectedStandingsLeague,
             selectedTeamDetail = ui.selectedTeamDetail,
+            selectedTeamHistory = ui.selectedTeamHistory,
             isLoadingTeamDetail = ui.isLoadingTeamDetail,
+            isLoadingTeamHistory = ui.isLoadingTeamHistory,
             starPlayers = mergedPlayers,
             selectedStarPlayer = ui.selectedStarPlayer,
             isSearchingPlayer = ui.isSearchingPlayer,
@@ -260,8 +293,11 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
             bannerMessage = ui.bannerMessage,
             selectedMatchDetail = latestSelectedMatch,
             selectedMatchLiveDetail = ui.selectedMatchLiveDetail,
+            selectedMatchH2H = ui.selectedMatchH2H,
             isLoadingMatchDetail = ui.isLoadingMatchDetail,
+            isLoadingMatchH2H = ui.isLoadingMatchH2H,
             matchDetailNote = ui.matchDetailNote,
+            canNavigateBackModal = ui.canNavigateBackModal,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -307,16 +343,36 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
         uiInteraction.update { it.copy(selectedStandingsLeague = code) }
     }
 
-    fun openMatchDetail(match: MatchItem) {
+    fun openMatchDetail(match: MatchItem, pushToStack: Boolean = true) {
+        if (pushToStack) {
+            val top = modalStack.lastOrNull()
+            if (top !is ModalSnapshot.Match || top.match.id != match.id) {
+                modalStack.add(ModalSnapshot.Match(match))
+            }
+        }
         detailPollingJob?.cancel()
         detailPollingJob = null
+        h2hJob?.cancel()
+        h2hJob = null
+        teamHistoryJob?.cancel()
+        teamHistoryJob = null
+
         val cached = fixtureRepo.getCachedLiveDetail(match.id)
+        val cachedH2H = fixtureRepo.getCachedH2H(match.id)
         val shouldSync = shouldAutoSyncDetail(match)
         uiInteraction.update {
             it.copy(
+                selectedTeamDetail = null,
+                selectedTeamHistory = emptyList(),
+                isLoadingTeamDetail = false,
+                isLoadingTeamHistory = false,
+                selectedStarPlayer = null,
                 selectedMatchDetail = match,
                 selectedMatchLiveDetail = cached,
+                selectedMatchH2H = cachedH2H,
                 isLoadingMatchDetail = cached == null && shouldSync,
+                isLoadingMatchH2H = cachedH2H == null,
+                canNavigateBackModal = modalStack.size > 1,
                 matchDetailNote = if (cached == null && !shouldSync) {
                     "已接入 ESPN 与 API-Football 零延迟引擎 · 开赛前约 45 分钟自动同步首发阵容与实时事件"
                 } else {
@@ -326,6 +382,24 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
         }
         if (shouldSync) {
             startDetailStream(match)
+        }
+        startMatchH2HLoad(match)
+    }
+
+    private fun startMatchH2HLoad(match: MatchItem) {
+        h2hJob?.cancel()
+        h2hJob = viewModelScope.launch {
+            val res = withContext(Dispatchers.IO) {
+                fixtureRepo.fetchMatchHeadToHeadAndForm(match)
+            }
+            val bundle = res.getOrNull()
+            uiInteraction.update { st ->
+                if (st.selectedMatchDetail?.id != match.id) return@update st
+                st.copy(
+                    selectedMatchH2H = bundle ?: st.selectedMatchH2H ?: MatchH2HBundle(),
+                    isLoadingMatchH2H = false,
+                )
+            }
         }
     }
 
@@ -396,35 +470,75 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun closeMatchDetail() {
-        detailPollingJob?.cancel()
-        detailPollingJob = null
-        uiInteraction.update {
-            it.copy(
-                selectedMatchDetail = null,
-                selectedMatchLiveDetail = null,
-                isLoadingMatchDetail = false,
-                matchDetailNote = null,
-            )
-        }
-    }
+    fun closeMatchDetail() = closeAllModals()
 
     fun openTeamDetailFromStanding(entry: StandingEntry) {
+        openTeamDetail(
+            teamName = entry.teamName,
+            teamZhName = entry.teamZhName,
+            compCode = entry.competitionCode,
+            crest = entry.teamCrest,
+        )
+    }
+
+    fun openTeamDetail(
+        teamName: String,
+        teamZhName: String = "",
+        compCode: String = "",
+        crest: String = "",
+        teamId: Int = 0,
+        pushToStack: Boolean = true,
+    ) {
+        val cleanEn = teamName.ifBlank { teamZhName }.trim()
+        val resolvedZh = TeamLocalization.preferChinese(cleanEn, teamZhName.ifBlank { TeamLocalization.localizeTeam(cleanEn) })
+        if (cleanEn.isBlank() && resolvedZh.isBlank()) return
+
         val currentState = uiState.value
-        val cached = currentState.teamsByName[entry.teamName.lowercase()]
-            ?: currentState.teamsByName[entry.teamZhName]
+        val cached = currentState.teamsByName[cleanEn.lowercase()]
+            ?: currentState.teamsByName[resolvedZh]
+            ?: currentState.allTeams.firstOrNull {
+                it.zhName == resolvedZh || it.name.equals(cleanEn, true)
+            }
+
+        val resolvedTeamId = cached?.teamId?.takeIf { it > 0 }
+            ?: teamId.takeIf { it > 0 }
+            ?: currentState.allMatches.firstOrNull {
+                it.homeTeamName.equals(cleanEn, true) || it.homeTeamZhName == resolvedZh
+            }?.homeTeamId
+            ?: currentState.allMatches.firstOrNull {
+                it.awayTeamName.equals(cleanEn, true) || it.awayTeamZhName == resolvedZh
+            }?.awayTeamId
+            ?: 0
+
+        val resolvedCode = cached?.competitionCode?.ifBlank { null }
+            ?: compCode.ifBlank { null }
+            ?: currentState.teamRankByName[resolvedZh]?.competitionCode
+            ?: ""
+        val resolvedCrest = cached?.crest?.ifBlank { null }
+            ?: crest.ifBlank { null }
+            ?: TeamAssetCatalog.resolveTeamLogo(cleanEn).ifBlank { TeamAssetCatalog.resolveTeamLogo(resolvedZh) }
+
+        if (pushToStack) {
+            val top = modalStack.lastOrNull()
+            if (top !is ModalSnapshot.Team || (top.teamZhName != resolvedZh && !top.teamName.equals(cleanEn, true))) {
+                modalStack.add(ModalSnapshot.Team(cleanEn, resolvedZh, resolvedTeamId, resolvedCode, resolvedCrest))
+            }
+        }
+
+        detailPollingJob?.cancel()
+        detailPollingJob = null
+        h2hJob?.cancel()
+        h2hJob = null
+        teamHistoryJob?.cancel()
+        teamHistoryJob = null
 
         val fallback = cached ?: TeamDetailInfo(
-            teamId = currentState.allMatches.firstOrNull {
-                it.homeTeamName.equals(entry.teamName, true)
-            }?.homeTeamId ?: currentState.allMatches.firstOrNull {
-                it.awayTeamName.equals(entry.teamName, true)
-            }?.awayTeamId ?: 0,
-            competitionCode = entry.competitionCode,
-            name = entry.teamName,
-            shortName = entry.teamName,
-            zhName = entry.teamZhName,
-            crest = entry.teamCrest,
+            teamId = resolvedTeamId,
+            competitionCode = resolvedCode,
+            name = cleanEn,
+            shortName = cleanEn,
+            zhName = resolvedZh,
+            crest = resolvedCrest,
             venue = "",
             founded = 0,
             clubColors = "",
@@ -433,55 +547,145 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
             coachNationality = "",
             squad = emptyList(),
         )
+        val localTeamMatches = currentState.allMatches.filter { m ->
+            m.involvesTeam(resolvedZh) || m.involvesTeam(cleanEn)
+        }.sortedByDescending { it.utcDate }
 
         uiInteraction.update {
             it.copy(
+                selectedMatchDetail = null,
+                selectedMatchLiveDetail = null,
+                selectedMatchH2H = null,
+                isLoadingMatchDetail = false,
+                isLoadingMatchH2H = false,
+                selectedStarPlayer = null,
                 selectedTeamDetail = fallback,
-                isLoadingTeamDetail = cached == null && fallback.teamId > 0,
+                selectedTeamHistory = localTeamMatches,
+                isLoadingTeamDetail = cached == null || cached.squad.isEmpty() || cached.squad.any { sq -> sq.portraitUrl.isBlank() },
+                isLoadingTeamHistory = true,
+                canNavigateBackModal = modalStack.size > 1,
             )
         }
 
-        if (cached == null && fallback.teamId > 0) {
+        teamHistoryJob = viewModelScope.launch {
+            val res = withContext(Dispatchers.IO) {
+                fixtureRepo.fetchTeamHistoryAndDetail(
+                    teamName = fallback.name,
+                    teamZhName = fallback.zhName,
+                    teamId = resolvedTeamId,
+                    compCode = resolvedCode,
+                    crest = resolvedCrest,
+                )
+            }
+            val pair = res.getOrNull()
+            uiInteraction.update { st ->
+                val curTeam = st.selectedTeamDetail ?: return@update st
+                if (curTeam.zhName != resolvedZh && !curTeam.name.equals(cleanEn, true)) return@update st
+                st.copy(
+                    selectedTeamDetail = pair?.first ?: curTeam,
+                    selectedTeamHistory = pair?.second?.takeIf { it.isNotEmpty() } ?: st.selectedTeamHistory,
+                    isLoadingTeamDetail = false,
+                    isLoadingTeamHistory = false,
+                )
+            }
+        }
+    }
+
+    fun closeTeamDetail() = closeAllModals()
+
+    fun openPlayerDetail(player: StarPlayer, pushToStack: Boolean = true) {
+        val enrichedCrests = player.copy(
+            clubCrestUrl = TeamAssetCatalog.resolveTeamLogo(player.clubName, player.clubCrestUrl)
+                .ifBlank { TeamAssetCatalog.resolveTeamLogo(player.clubZhName) },
+            nationalCrestUrl = TeamAssetCatalog.resolveTeamLogo(player.nationalName, player.nationalCrestUrl)
+                .ifBlank { TeamAssetCatalog.resolveTeamLogo(player.nationalZhName) },
+        )
+        if (pushToStack) {
+            val top = modalStack.lastOrNull()
+            if (top !is ModalSnapshot.Player || top.player.id != enrichedCrests.id) {
+                modalStack.add(ModalSnapshot.Player(enrichedCrests))
+            }
+        }
+        detailPollingJob?.cancel()
+        detailPollingJob = null
+        h2hJob?.cancel()
+        h2hJob = null
+        teamHistoryJob?.cancel()
+        teamHistoryJob = null
+
+        uiInteraction.update {
+            it.copy(
+                selectedMatchDetail = null,
+                selectedMatchLiveDetail = null,
+                selectedMatchH2H = null,
+                selectedTeamDetail = null,
+                selectedTeamHistory = emptyList(),
+                isLoadingTeamDetail = false,
+                isLoadingTeamHistory = false,
+                selectedStarPlayer = enrichedCrests,
+                canNavigateBackModal = modalStack.size > 1,
+            )
+        }
+        if (enrichedCrests.portraitUrl.isBlank()) {
             viewModelScope.launch {
-                val res = withContext(Dispatchers.IO) {
-                    fixtureRepo.fetchTeamDetailOnDemand(
-                        teamName = entry.teamName,
-                        teamId = fallback.teamId,
-                        compCode = entry.competitionCode,
-                        crest = entry.teamCrest,
-                    )
+                val updated = withContext(Dispatchers.IO) {
+                    fixtureRepo.enrichSinglePlayerPortrait(enrichedCrests)
                 }
                 uiInteraction.update { st ->
-                    val loaded = res.getOrNull()
-                    if (st.selectedTeamDetail?.name == entry.teamName && loaded != null) {
-                        st.copy(selectedTeamDetail = loaded, isLoadingTeamDetail = false)
+                    if (st.selectedStarPlayer?.id == enrichedCrests.id) {
+                        st.copy(selectedStarPlayer = updated)
                     } else {
-                        st.copy(isLoadingTeamDetail = false)
+                        st
                     }
                 }
             }
         }
     }
 
-    fun closeTeamDetail() {
-        uiInteraction.update { it.copy(selectedTeamDetail = null, isLoadingTeamDetail = false) }
-    }
-
-    fun openPlayerDetail(player: StarPlayer) {
-        uiInteraction.update { it.copy(selectedStarPlayer = player) }
+    fun openLineupPlayerByName(
+        name: String,
+        zhName: String,
+        number: Int,
+        portraitUrl: String,
+        teamName: String,
+        teamZhName: String,
+        compCode: String,
+    ) {
+        val existing = uiState.value.starPlayers.firstOrNull {
+            it.name.equals(name, true) || (zhName.isNotBlank() && it.zhName == zhName)
+        }
+        val target = existing ?: StarPlayer(
+            id = "lp-${name.lowercase().replace(' ', '-')}",
+            name = name,
+            zhName = zhName.ifBlank { TeamLocalization.localizePlayer(name).first },
+            clubName = teamName,
+            clubZhName = teamZhName,
+            clubCrestUrl = TeamAssetCatalog.resolveTeamLogo(teamName),
+            nationalName = "",
+            nationalZhName = "",
+            nationalCrestUrl = "",
+            positionZh = "一线队球员",
+            nationalityZh = "国际",
+            shirtNumber = number,
+            birthYear = 0,
+            portraitUrl = portraitUrl,
+            competitionCode = compCode,
+        )
+        openPlayerDetail(target, pushToStack = true)
     }
 
     fun openSquadMemberAsPlayer(member: SquadMember, team: TeamDetailInfo) {
+        val isNatTeam = team.competitionCode in CompetitionCatalog.internationalCodes || team.zhName.endsWith("国家队")
         val player = StarPlayer(
             id = member.id,
             name = member.name,
             zhName = member.zhName,
-            clubName = team.name,
-            clubZhName = team.zhName,
-            clubCrestUrl = team.crest,
-            nationalName = member.nationality,
-            nationalZhName = TeamLocalization.localizeTeam(member.nationality).ifBlank { member.nationality },
-            nationalCrestUrl = TeamAssetCatalog.resolveTeamLogo(member.nationality),
+            clubName = if (isNatTeam) "" else team.name,
+            clubZhName = if (isNatTeam) "" else team.zhName,
+            clubCrestUrl = if (isNatTeam) "" else team.crest,
+            nationalName = if (isNatTeam) team.name else member.nationality,
+            nationalZhName = if (isNatTeam) team.zhName else TeamLocalization.localizeTeam(member.nationality).ifBlank { member.nationality },
+            nationalCrestUrl = if (isNatTeam) team.crest else TeamAssetCatalog.resolveTeamLogo(member.nationality),
             positionZh = member.positionZh,
             nationalityZh = member.nationality,
             shirtNumber = member.shirtNumber,
@@ -490,11 +694,48 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
             competitionCode = team.competitionCode,
             isTransliterated = member.isTransliterated,
         )
-        uiInteraction.update { it.copy(selectedTeamDetail = null, selectedStarPlayer = player) }
+        openPlayerDetail(player, pushToStack = true)
     }
 
-    fun closePlayerDetail() {
-        uiInteraction.update { it.copy(selectedStarPlayer = null) }
+    fun navigateBackModal() {
+        if (modalStack.size <= 1) {
+            closeAllModals()
+            return
+        }
+        modalStack.removeAt(modalStack.lastIndex)
+        when (val prev = modalStack.last()) {
+            is ModalSnapshot.Match -> openMatchDetail(prev.match, pushToStack = false)
+            is ModalSnapshot.Team -> openTeamDetail(prev.teamName, prev.teamZhName, prev.compCode, prev.crest, prev.teamId, pushToStack = false)
+            is ModalSnapshot.Player -> openPlayerDetail(prev.player, pushToStack = false)
+        }
+    }
+
+    fun closePlayerDetail() = closeAllModals()
+
+    fun closeAllModals() {
+        modalStack.clear()
+        detailPollingJob?.cancel()
+        detailPollingJob = null
+        h2hJob?.cancel()
+        h2hJob = null
+        teamHistoryJob?.cancel()
+        teamHistoryJob = null
+        uiInteraction.update {
+            it.copy(
+                selectedMatchDetail = null,
+                selectedMatchLiveDetail = null,
+                selectedMatchH2H = null,
+                isLoadingMatchDetail = false,
+                isLoadingMatchH2H = false,
+                matchDetailNote = null,
+                selectedTeamDetail = null,
+                selectedTeamHistory = emptyList(),
+                isLoadingTeamDetail = false,
+                isLoadingTeamHistory = false,
+                selectedStarPlayer = null,
+                canNavigateBackModal = false,
+            )
+        }
     }
 
     fun clearBanner() {

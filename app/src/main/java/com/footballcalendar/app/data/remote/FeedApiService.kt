@@ -37,6 +37,21 @@ interface FeedApiService {
         @Query("limit") limit: Int = 30,
     ): FootballDataScorersResponse
 
+    @GET("v4/matches/{id}/head2head")
+    suspend fun fetchFootballDataHead2Head(
+        @Header("X-Auth-Token") apiKey: String,
+        @Path("id") matchId: Long,
+        @Query("limit") limit: Int = 15,
+    ): FootballDataHead2HeadResponse
+
+    @GET("v4/teams/{id}/matches")
+    suspend fun fetchFootballDataTeamMatches(
+        @Header("X-Auth-Token") apiKey: String,
+        @Path("id") teamId: Int,
+        @Query("status") status: String = "FINISHED",
+        @Query("limit") limit: Int = 15,
+    ): FootballDataTeamMatchesResponse
+
     @GET
     suspend fun fetchApiFootballFixtures(
         @Url url: String,
@@ -87,14 +102,25 @@ interface FeedApiService {
     ): EspnTeamRosterResponse
 
     @GET
+    suspend fun fetchEspnTeamSchedule(
+        @Url url: String,
+    ): EspnTeamScheduleResponse
+
+    @GET
+    suspend fun fetchWikipediaPageImages(
+        @Url url: String,
+        @Header("User-Agent") userAgent: String = "FootballCalendarApp/2.3 (https://github.com/kiki1112/football-calendar-android)",
+    ): WikipediaPageImagesResponse
+
+    @GET
     suspend fun fetchWikipediaSummary(
         @Url url: String,
-        @Header("User-Agent") userAgent: String = "FootballCalendarApp/2.2 (https://github.com/kiki1112/football-calendar-android)",
+        @Header("User-Agent") userAgent: String = "FootballCalendarApp/2.3 (https://github.com/kiki1112/football-calendar-android)",
     ): WikipediaSummaryResponse
 
     @GET
     suspend fun fetchWikipediaLanglinks(
         @Url url: String,
-        @Header("User-Agent") userAgent: String = "FootballCalendarApp/2.2 (https://github.com/kiki1112/football-calendar-android)",
+        @Header("User-Agent") userAgent: String = "FootballCalendarApp/2.3 (https://github.com/kiki1112/football-calendar-android)",
     ): WikipediaLanglinksApiResponse
 }

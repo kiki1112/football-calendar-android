@@ -87,9 +87,62 @@ object TeamAssetCatalog {
         "韩国国家队" to "https://thumb.wikimedia.org/wikipedia/en/thumb/4/41/South_Korea_national_football_team.svg/330px-South_Korea_national_football_team.svg.png",
     )
 
+    private val nationalIocByKey: Map<String, String> = mapOf(
+        "norway" to "nor", "挪威" to "nor",
+        "egypt" to "egy", "埃及" to "egy",
+        "belgium" to "bel", "比利时" to "bel",
+        "croatia" to "cro", "克罗地亚" to "cro",
+        "uruguay" to "uru", "乌拉圭" to "uru",
+        "colombia" to "col", "哥伦比亚" to "col",
+        "morocco" to "mar", "摩洛哥" to "mar",
+        "usa" to "usa", "united states" to "usa", "美国" to "usa",
+        "mexico" to "mex", "墨西哥" to "mex",
+        "switzerland" to "sui", "瑞士" to "sui",
+        "denmark" to "den", "丹麦" to "den",
+        "austria" to "aut", "奥地利" to "aut",
+        "poland" to "pol", "波兰" to "pol",
+        "sweden" to "swe", "瑞典" to "swe",
+        "serbia" to "srb", "塞尔维亚" to "srb",
+        "turkey" to "tur", "türkiye" to "tur", "turkiye" to "tur", "土耳其" to "tur",
+        "ukraine" to "ukr", "乌克兰" to "ukr",
+        "nigeria" to "nga", "尼日利亚" to "nga",
+        "senegal" to "sen", "塞内加尔" to "sen",
+        "australia" to "aus", "澳大利亚" to "aus",
+        "iran" to "irn", "ir iran" to "irn", "伊朗" to "irn",
+        "saudi arabia" to "ksa", "沙特阿拉伯" to "ksa",
+        "qatar" to "qat", "卡塔尔" to "qat",
+        "uzbekistan" to "uzb", "乌兹别克斯坦" to "uzb",
+        "iraq" to "irq", "伊拉克" to "irq",
+        "canada" to "can", "加拿大" to "can",
+        "ecuador" to "ecu", "厄瓜多尔" to "ecu",
+        "chile" to "chi", "智利" to "chi",
+        "peru" to "per", "秘鲁" to "per",
+        "paraguay" to "par", "巴拉圭" to "par",
+        "tunisia" to "tun", "突尼斯" to "tun",
+        "algeria" to "alg", "阿尔及利亚" to "alg",
+        "cameroon" to "cmr", "喀麦隆" to "cmr",
+        "ghana" to "gha", "加纳" to "gha",
+        "hungary" to "hun", "匈牙利" to "hun",
+        "scotland" to "sco", "苏格兰" to "sco",
+        "wales" to "wal", "威尔士" to "wal",
+        "czech republic" to "cze", "czechia" to "cze", "捷克" to "cze",
+        "romania" to "rou", "罗马尼亚" to "rou",
+        "greece" to "gre", "希腊" to "gre",
+        "china" to "chn", "china pr" to "chn", "中国" to "chn",
+        "japan" to "jpn", "日本" to "jpn",
+        "south korea" to "kor", "korea republic" to "kor", "韩国" to "kor",
+    )
+
     fun resolveTeamLogo(teamName: String, apiCrest: String? = null): String {
         if (!apiCrest.isNullOrBlank()) return apiCrest.trim()
-        return logoByKey[teamName] ?: ""
+        logoByKey[teamName]?.let { return it }
+        val base = teamName
+            .replace("国家队", "")
+            .replace(Regex("\\s*(U17|U20|U21|U23)\\s*$", RegexOption.IGNORE_CASE), "")
+            .trim()
+            .lowercase()
+        val ioc = nationalIocByKey[base]
+        return if (ioc != null) "https://a.espncdn.com/i/teamlogos/countries/500/$ioc.png" else ""
     }
 
     val starPlayers: List<StarPlayer> = listOf(
@@ -108,7 +161,7 @@ object TeamAssetCatalog {
             clubName = "Manchester City FC", clubZhName = "曼城",
             clubCrestUrl = resolveTeamLogo("Manchester City FC"),
             nationalName = "Norway", nationalZhName = "挪威国家队",
-            nationalCrestUrl = "",
+            nationalCrestUrl = resolveTeamLogo("Norway"),
             positionZh = "中锋", nationalityZh = "挪威", shirtNumber = 9, birthYear = 2000,
             portraitUrl = "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/43/Erling_Haaland_Morocco_v_Norway_7_June_2026-51.jpg/330px-Erling_Haaland_Morocco_v_Norway_7_June_2026-51.jpg",
             bio = "曼城锋线核心，英超与欧冠顶级禁区终结者。",
@@ -148,7 +201,7 @@ object TeamAssetCatalog {
             clubName = "Liverpool FC", clubZhName = "利物浦",
             clubCrestUrl = resolveTeamLogo("Liverpool FC"),
             nationalName = "Egypt", nationalZhName = "埃及国家队",
-            nationalCrestUrl = "",
+            nationalCrestUrl = resolveTeamLogo("Egypt"),
             positionZh = "右边锋", nationalityZh = "埃及", shirtNumber = 11, birthYear = 1992,
             portraitUrl = "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a6/Mohamed_Salah_Argentina_v_Egypt_7_July_2026-163_%28cropped%29.jpg/330px-Mohamed_Salah_Argentina_v_Egypt_7_July_2026-163_%28cropped%29.jpg",
             bio = "利物浦核心射手，英超历史级边锋。",

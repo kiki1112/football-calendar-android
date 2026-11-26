@@ -44,7 +44,7 @@ jobs:
           python feed/generate_feed.py \
             --output-dir _site \
             --competitions PL,PD,BL1,SA,FL1,CL,UEL,UECL,ACL,J1,J2,KL1,AL,MLS,ELC,DED,PPL,BSA,CLI,WC,EC,UNL,U17WC,U20AC \
-            --days-back 3 \
+            --days-back 14 \
             --days-ahead 21 \
             --existing-feed-url https://kiki1112.github.io/football-calendar-android/fixtures.json
 

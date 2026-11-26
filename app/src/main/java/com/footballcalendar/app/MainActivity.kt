@@ -1,5 +1,6 @@
 package com.footballcalendar.app
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -8,13 +9,16 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Leaderboard
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
@@ -22,6 +26,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -45,8 +50,11 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.footballcalendar.app.ui.CalendarViewModel
 import com.footballcalendar.app.ui.screens.CalendarScreen
+import com.footballcalendar.app.ui.screens.MatchDetailBottomSheet
+import com.footballcalendar.app.ui.screens.PlayerDetailSheet
 import com.footballcalendar.app.ui.screens.SettingsScreen
 import com.footballcalendar.app.ui.screens.StandingsScreen
+import com.footballcalendar.app.ui.screens.TeamDetailBottomSheet
 import com.footballcalendar.app.ui.screens.TeamsScreen
 import com.footballcalendar.app.ui.theme.AppleCanvas
 import com.footballcalendar.app.ui.theme.AppleDivider
@@ -79,16 +87,18 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FootballCalendarRoot(
     viewModel: CalendarViewModel = viewModel(factory = CalendarViewModel.Factory),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     val navController = rememberNavController()
     val snackbarHostState = remember { SnackbarHostState() }
     val backStack by navController.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route ?: AppTab.CALENDAR.route
-    val lifecycleOwner = LocalContext.current as? LifecycleOwner
+    val lifecycleOwner = context as? LifecycleOwner
 
     DisposableEffect(lifecycleOwner) {
         val owner = lifecycleOwner
@@ -180,21 +190,9 @@ private fun FootballCalendarRoot(
                     onSelectLeagueFilter = viewModel::selectLeagueFilter,
                     onRefresh = { viewModel.syncNow(simulateDemoChange = false) },
                     onDismissChanges = viewModel::dismissChangesBanner,
-                    onOpenMatchDetail = viewModel::openMatchDetail,
-                    onCloseMatchDetail = viewModel::closeMatchDetail,
-                    onOpenPlayerDetail = { player ->
-                        viewModel.closeMatchDetail()
-                        viewModel.openPlayerDetail(player)
-                        navController.navigate(AppTab.TEAMS.route) {
-                            popUpTo(AppTab.CALENDAR.route) { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    },
-                    onToggleFavoriteTeam = viewModel::toggleFavoriteTeam,
+                    onOpenMatchDetail = { m -> viewModel.openMatchDetail(m) },
+                    onOpenTeamDetail = { en, zh, cc, cr, tid -> viewModel.openTeamDetail(en, zh, cc, cr, tid) },
                     onToggleWatchlist = viewModel::toggleWatchlistMatch,
-                    onBuildCalendarIntent = viewModel::buildAddToCalendarIntent,
-                    onBuildShareIcsIntent = viewModel::buildShareIcsIntent,
                 )
             }
             composable(AppTab.STANDINGS.route) {
@@ -202,24 +200,6 @@ private fun FootballCalendarRoot(
                     state = state,
                     onSelectLeague = viewModel::selectStandingsLeague,
                     onClickTeam = viewModel::openTeamDetailFromStanding,
-                    onCloseTeamDetail = viewModel::closeTeamDetail,
-                    onToggleFavoriteTeam = viewModel::toggleFavoriteTeam,
-                    onClickSquadMember = { member, team ->
-                        viewModel.openSquadMemberAsPlayer(member, team)
-                        navController.navigate(AppTab.TEAMS.route) {
-                            popUpTo(AppTab.CALENDAR.route) { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    },
-                    onOpenMatchDetail = { match ->
-                        viewModel.openMatchDetail(match)
-                        navController.navigate(AppTab.CALENDAR.route) {
-                            popUpTo(AppTab.CALENDAR.route) { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    },
                 )
             }
             composable(AppTab.TEAMS.route) {
@@ -228,17 +208,10 @@ private fun FootballCalendarRoot(
                     onToggleCompetition = viewModel::toggleCompetition,
                     onToggleFavoriteTeam = viewModel::toggleFavoriteTeam,
                     onToggleFavoritePlayer = viewModel::toggleFavoritePlayer,
-                    onOpenPlayerDetail = viewModel::openPlayerDetail,
-                    onClosePlayerDetail = viewModel::closePlayerDetail,
+                    onOpenPlayerDetail = { p -> viewModel.openPlayerDetail(p) },
+                    onOpenTeamDetail = { en, zh, cc, cr -> viewModel.openTeamDetail(en, zh, cc, cr) },
                     onSearchExternalPlayer = viewModel::searchExternalPlayer,
-                    onOpenMatchDetail = { match ->
-                        viewModel.openMatchDetail(match)
-                        navController.navigate(AppTab.CALENDAR.route) {
-                            popUpTo(AppTab.CALENDAR.route) { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    },
+                    onOpenMatchDetail = { m -> viewModel.openMatchDetail(m) },
                 )
             }
             composable(AppTab.SETTINGS.route) {
@@ -249,16 +222,136 @@ private fun FootballCalendarRoot(
                     onUpdateSyncSettings = viewModel::updateSyncSettings,
                     onUpdateDisplayAndNotifications = viewModel::updateDisplayAndNotificationSettings,
                     onSyncSystemCalendarNow = viewModel::syncMatchesToSystemCalendarNow,
-                    onOpenMatchDetail = { match ->
-                        viewModel.openMatchDetail(match)
-                        navController.navigate(AppTab.CALENDAR.route) {
-                            popUpTo(AppTab.CALENDAR.route) { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    },
+                    onOpenMatchDetail = { m -> viewModel.openMatchDetail(m) },
+                    onOpenTeamDetail = { en, zh, cc, cr, tid -> viewModel.openTeamDetail(en, zh, cc, cr, tid) },
                     onBuildShareIcsIntent = viewModel::buildShareIcsIntent,
                     onShowMessage = viewModel::showBanner,
+                )
+            }
+        }
+    }
+
+    val selectedMatch = state.selectedMatchDetail
+    val selectedTeam = state.selectedTeamDetail
+    val selectedPlayer = state.selectedStarPlayer
+
+    if (selectedMatch != null) {
+        androidx.compose.runtime.key(selectedMatch.id) {
+            val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+            val relatedPlayers = remember(selectedMatch.id, state.starPlayers) {
+                state.starPlayers.filter { p ->
+                    (p.clubZhName.isNotBlank() && selectedMatch.involvesTeam(p.clubZhName)) ||
+                        (p.clubName.isNotBlank() && selectedMatch.involvesTeam(p.clubName)) ||
+                        (p.nationalZhName.isNotBlank() && selectedMatch.involvesTeam(p.nationalZhName)) ||
+                        (p.nationalName.isNotBlank() && selectedMatch.involvesTeam(p.nationalName))
+                }
+            }
+            ModalBottomSheet(
+                onDismissRequest = viewModel::closeAllModals,
+                sheetState = sheetState,
+                containerColor = Color.White.copy(alpha = 0.94f),
+                scrimColor = Color(0x4A1C1C1E),
+                shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            ) {
+                MatchDetailBottomSheet(
+                    match = selectedMatch,
+                    liveDetail = state.selectedMatchLiveDetail,
+                    isLoadingLiveDetail = state.isLoadingMatchDetail,
+                    liveDetailNote = state.matchDetailNote,
+                    h2hBundle = state.selectedMatchH2H,
+                    isLoadingH2H = state.isLoadingMatchH2H,
+                    favoriteTeams = state.prefs.favoriteTeams,
+                    isWatchlisted = selectedMatch.id in state.prefs.watchlistMatchIds,
+                    homeStanding = state.standingFor(selectedMatch.competitionCode, selectedMatch.homeTeamZhName, selectedMatch.homeTeamName),
+                    awayStanding = state.standingFor(selectedMatch.competitionCode, selectedMatch.awayTeamZhName, selectedMatch.awayTeamName),
+                    relatedPlayers = relatedPlayers,
+                    canNavigateBack = state.canNavigateBackModal,
+                    onNavigateBack = viewModel::navigateBackModal,
+                    onClickTeam = { en, zh, cc, cr, tid -> viewModel.openTeamDetail(en, zh, cc, cr, tid) },
+                    onClickMatch = { m -> viewModel.openMatchDetail(m) },
+                    onClickPlayer = { p -> viewModel.openPlayerDetail(p) },
+                    onClickLineupPlayer = { lp, side ->
+                        viewModel.openLineupPlayerByName(
+                            name = lp.name,
+                            zhName = lp.zhName,
+                            number = lp.number,
+                            portraitUrl = lp.portraitUrl,
+                            teamName = side.teamName,
+                            teamZhName = side.teamZhName,
+                            compCode = selectedMatch.competitionCode,
+                        )
+                    },
+                    onToggleFavorite = viewModel::toggleFavoriteTeam,
+                    onToggleWatchlist = { viewModel.toggleWatchlistMatch(selectedMatch.id) },
+                    onAddToSystemCalendar = { context.startActivity(viewModel.buildAddToCalendarIntent(selectedMatch)) },
+                    onShareIcs = {
+                        viewModel.buildShareIcsIntent(listOf(selectedMatch), "match_${selectedMatch.id}.ics")?.let { intent ->
+                            context.startActivity(Intent.createChooser(intent, "分享赛程日历 (.ics)"))
+                        }
+                    },
+                )
+            }
+        }
+    } else if (selectedTeam != null) {
+        androidx.compose.runtime.key(selectedTeam.zhName, selectedTeam.name) {
+            val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+            ModalBottomSheet(
+                onDismissRequest = viewModel::closeAllModals,
+                sheetState = sheetState,
+                containerColor = Color.White.copy(alpha = 0.94f),
+                scrimColor = Color(0x4A1C1C1E),
+                shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            ) {
+                val teamStanding = state.standingFor(selectedTeam.competitionCode, selectedTeam.zhName, selectedTeam.name)
+                    ?: state.teamRankByName[selectedTeam.zhName]
+                    ?: state.teamRankByName[selectedTeam.name]
+                val combinedTeamMatches = remember(selectedTeam.zhName, selectedTeam.name, state.selectedTeamHistory, state.allMatches) {
+                    val base = state.selectedTeamHistory + state.allMatches.filter { m ->
+                        m.involvesTeam(selectedTeam.zhName) || m.involvesTeam(selectedTeam.name)
+                    }
+                    base.distinctBy { "${it.utcDate.take(10)}|${it.homeTeamZhName}|${it.awayTeamZhName}" }
+                }
+                TeamDetailBottomSheet(
+                    team = selectedTeam,
+                    standing = teamStanding,
+                    matches = combinedTeamMatches,
+                    isLoading = state.isLoadingTeamDetail,
+                    isLoadingHistory = state.isLoadingTeamHistory,
+                    isFavorite = selectedTeam.zhName in state.prefs.favoriteTeams || selectedTeam.name in state.prefs.favoriteTeams,
+                    canNavigateBack = state.canNavigateBackModal,
+                    onNavigateBack = viewModel::navigateBackModal,
+                    onToggleFavorite = { viewModel.toggleFavoriteTeam(selectedTeam.zhName) },
+                    onClickSquadMember = { member -> viewModel.openSquadMemberAsPlayer(member, selectedTeam) },
+                    onClickMatch = { m -> viewModel.openMatchDetail(m) },
+                )
+            }
+        }
+    } else if (selectedPlayer != null) {
+        androidx.compose.runtime.key(selectedPlayer.id) {
+            val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+            ModalBottomSheet(
+                onDismissRequest = viewModel::closeAllModals,
+                sheetState = sheetState,
+                containerColor = Color.White.copy(alpha = 0.94f),
+                scrimColor = Color(0x4A1C1C1E),
+                shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            ) {
+                val playerMatches = state.allMatches.filter { m ->
+                    (selectedPlayer.clubZhName.isNotBlank() && m.involvesTeam(selectedPlayer.clubZhName)) ||
+                        (selectedPlayer.clubName.isNotBlank() && m.involvesTeam(selectedPlayer.clubName)) ||
+                        (selectedPlayer.nationalZhName.isNotBlank() && m.involvesTeam(selectedPlayer.nationalZhName)) ||
+                        (selectedPlayer.nationalName.isNotBlank() && m.involvesTeam(selectedPlayer.nationalName))
+                }.sortedByDescending { it.utcDate }
+
+                PlayerDetailSheet(
+                    player = selectedPlayer,
+                    isFavorite = selectedPlayer.id in state.prefs.favoritePlayers,
+                    upcomingMatches = playerMatches,
+                    canNavigateBack = state.canNavigateBackModal,
+                    onNavigateBack = viewModel::navigateBackModal,
+                    onToggleFavorite = { viewModel.toggleFavoritePlayer(selectedPlayer.id) },
+                    onClickTeam = { en, zh, cc, cr -> viewModel.openTeamDetail(en, zh, cc, cr) },
+                    onClickMatch = { m -> viewModel.openMatchDetail(m) },
                 )
             }
         }

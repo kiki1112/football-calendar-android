@@ -145,7 +145,7 @@ class GenerateFeedTest(unittest.TestCase):
             )
 
             fixtures_json = json.loads((out_dir / "fixtures.json").read_text(encoding="utf-8"))
-            self.assertEqual(fixtures_json["schemaVersion"], 4)
+            self.assertEqual(fixtures_json["schemaVersion"], 5)
             self.assertEqual(len(fixtures_json["matches"]), len(matches))
             self.assertEqual(len(fixtures_json["standings"]), len(standings))
             self.assertEqual(len(fixtures_json["players"]), len(players))
@@ -155,10 +155,13 @@ class GenerateFeedTest(unittest.TestCase):
             self.assertTrue((out_dir / "ics" / "WC.ics").exists())
             self.assertTrue((out_dir / "ics" / "J1.ics").exists())
             html_text = (out_dir / "index.html").read_text(encoding="utf-8")
+            self.assertEqual(html_text.count("No.1") >= 1, True)
             self.assertIn("联赛积分榜", html_text)
             self.assertIn("球员榜", html_text)
             self.assertIn("No.1", html_text)
             self.assertNotIn("第1名", html_text)
+            self.assertTrue(gf.resolve_team_logo("Norway").endswith("/nor.png"))
+            self.assertTrue(gf.resolve_team_logo("埃及国家队").endswith("/egy.png"))
 
 
 if __name__ == "__main__":
