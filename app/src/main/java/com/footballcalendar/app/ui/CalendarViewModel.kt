@@ -13,13 +13,18 @@ import com.footballcalendar.app.FootballCalendarApplication
 import com.footballcalendar.app.data.preferences.UserPreferences
 import com.footballcalendar.app.model.CompetitionCatalog
 import com.footballcalendar.app.model.DataSourceMode
+import com.footballcalendar.app.model.LiveMatchDetail
 import com.footballcalendar.app.model.MatchItem
+import com.footballcalendar.app.model.MatchStatus
 import com.footballcalendar.app.model.ScheduleChange
 import com.footballcalendar.app.model.ScheduleChangeType
 import com.footballcalendar.app.model.StandingEntry
 import com.footballcalendar.app.model.StarPlayer
+import com.footballcalendar.app.model.TeamDetailInfo
 import com.footballcalendar.app.util.IcsExporter
 import com.footballcalendar.app.util.MatchTimeFormatter
+import com.footballcalendar.app.util.TeamAssetCatalog
+import com.footballcalendar.app.util.TeamLocalization
 import com.footballcalendar.app.widget.NextMatchWidgetProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,11 +36,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
-import java.time.ZoneId
 
 data class CalendarUiState(
     val currentMonth: YearMonth = YearMonth.now(),
@@ -48,19 +51,26 @@ data class CalendarUiState(
     val matchesByDate: Map<LocalDate, List<MatchItem>> = emptyMap(),
     val selectedDayMatches: List<MatchItem> = emptyList(),
     val heroMatch: MatchItem? = null,
-    val dayClashWarnings: List<String> = emptyList(),
     val standingsByLeague: Map<String, List<StandingEntry>> = emptyMap(),
     val teamRankByName: Map<String, StandingEntry> = emptyMap(),
     val teamRankByLeagueAndName: Map<Pair<String, String>, StandingEntry> = emptyMap(),
+    val teamsByName: Map<String, TeamDetailInfo> = emptyMap(),
+    val allTeams: List<TeamDetailInfo> = emptyList(),
     val selectedStandingsLeague: String = "PL",
+    val selectedTeamDetail: TeamDetailInfo? = null,
+    val isLoadingTeamDetail: Boolean = false,
     val starPlayers: List<StarPlayer> = emptyList(),
     val selectedStarPlayer: StarPlayer? = null,
     val isSearchingPlayer: Boolean = false,
     val prefs: UserPreferences = UserPreferences(),
     val isSyncing: Boolean = false,
+    val isRefreshingLive: Boolean = false,
     val recentChanges: List<ScheduleChange> = emptyList(),
     val bannerMessage: String? = null,
     val selectedMatchDetail: MatchItem? = null,
+    val selectedMatchLiveDetail: LiveMatchDetail? = null,
+    val isLoadingMatchDetail: Boolean = false,
+    val matchDetailNote: String? = null,
 ) {
     fun standingFor(competitionCode: String, teamZh: String, teamEn: String): StandingEntry? {
         return teamRankByLeagueAndName[competitionCode to teamZh]
@@ -76,11 +86,17 @@ private data class UiInteractionState(
     val selectedLeagueFilter: String? = null,
     val selectedStandingsLeague: String = "PL",
     val selectedStarPlayer: StarPlayer? = null,
+    val selectedTeamDetail: TeamDetailInfo? = null,
+    val isLoadingTeamDetail: Boolean = false,
     val isSearchingPlayer: Boolean = false,
     val isSyncing: Boolean = false,
+    val isRefreshingLive: Boolean = false,
     val recentChanges: List<ScheduleChange> = emptyList(),
     val bannerMessage: String? = null,
     val selectedMatchDetail: MatchItem? = null,
+    val selectedMatchLiveDetail: LiveMatchDetail? = null,
+    val isLoadingMatchDetail: Boolean = false,
+    val matchDetailNote: String? = null,
 )
 
 class CalendarViewModel(application: Application) : AndroidViewModel(application) {
@@ -93,13 +109,25 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
 
     private val uiInteraction = MutableStateFlow(UiInteractionState())
 
-    val uiState: StateFlow<CalendarUiState> = combine(
+    private val coreDataFlow = combine(
         fixtureRepo.observeAllMatches(),
         fixtureRepo.observeAllStandings(),
+        fixtureRepo.observeAllTeams(),
         fixtureRepo.starPlayersFlow,
+    ) { matches, standings, teams, players ->
+        QuadData(matches, standings, teams, players)
+    }
+
+    val uiState: StateFlow<CalendarUiState> = combine(
+        coreDataFlow,
         prefsRepo.preferencesFlow,
         uiInteraction,
-    ) { allMatches, allStandings, players, prefs, ui ->
+    ) { core, prefs, ui ->
+        val allMatches = core.matches
+        val allStandings = core.standings
+        val allTeams = core.teams
+        val basePlayers = core.players
+
         val zoneId = MatchTimeFormatter.BEIJING_ZONE
         val filtered = allMatches.filter { match ->
             val leagueAllowed = match.competitionCode in prefs.followedCompetitions
@@ -125,7 +153,6 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
         }
 
         val dayMatches = grouped[ui.selectedDate].orEmpty().sortedBy { it.utcDate }
-        val clashWarnings = detectScheduleClashes(dayMatches, zoneId)
 
         val now = Instant.now().minusSeconds(1800)
         val upcomingFollowed = allMatches.filter { match ->
@@ -151,6 +178,54 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
                 put(entry.competitionCode to entry.teamZhName, entry)
             }
         }
+        val teamsMap = buildMap<String, TeamDetailInfo> {
+            allTeams.forEach { t ->
+                put(t.name.lowercase(), t)
+                put(t.zhName, t)
+                put(t.shortName.lowercase(), t)
+            }
+        }
+
+        // Merge Scorer Leaderboard + All Squad Players across all teams cleanly
+        val mergedPlayers = buildList {
+            val seenKey = HashSet<String>()
+            basePlayers.forEach { p ->
+                val key = "${p.name.lowercase()}|${p.clubName.lowercase()}"
+                if (seenKey.add(key)) add(p)
+            }
+            allTeams.forEach { team ->
+                team.squad.forEach { sq ->
+                    val key = "${sq.name.lowercase()}|${team.name.lowercase()}"
+                    if (seenKey.add(key)) {
+                        add(
+                            StarPlayer(
+                                id = sq.id,
+                                name = sq.name,
+                                zhName = sq.zhName,
+                                clubName = team.name,
+                                clubZhName = team.zhName,
+                                clubCrestUrl = team.crest,
+                                nationalName = sq.nationality,
+                                nationalZhName = TeamLocalization.localizeTeam(sq.nationality).ifBlank { sq.nationality },
+                                nationalCrestUrl = TeamAssetCatalog.resolveTeamLogo(sq.nationality),
+                                positionZh = sq.positionZh,
+                                nationalityZh = sq.nationality,
+                                shirtNumber = sq.shirtNumber,
+                                birthYear = sq.birthYear,
+                                portraitUrl = sq.portraitUrl,
+                                competitionCode = team.competitionCode,
+                                isTransliterated = sq.isTransliterated,
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+
+        // Sync selectedMatchDetail if scores were refreshed in Room
+        val latestSelectedMatch = ui.selectedMatchDetail?.let { sel ->
+            allMatches.firstOrNull { it.id == sel.id } ?: sel
+        }
 
         CalendarUiState(
             currentMonth = ui.currentMonth,
@@ -163,42 +238,32 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
             matchesByDate = grouped,
             selectedDayMatches = dayMatches,
             heroMatch = hero,
-            dayClashWarnings = clashWarnings,
             standingsByLeague = standingsGrouped,
             teamRankByName = rankMap,
             teamRankByLeagueAndName = leagueRankMap,
+            teamsByName = teamsMap,
+            allTeams = allTeams,
             selectedStandingsLeague = ui.selectedStandingsLeague,
-            starPlayers = players,
+            selectedTeamDetail = ui.selectedTeamDetail,
+            isLoadingTeamDetail = ui.isLoadingTeamDetail,
+            starPlayers = mergedPlayers,
             selectedStarPlayer = ui.selectedStarPlayer,
             isSearchingPlayer = ui.isSearchingPlayer,
             prefs = prefs,
             isSyncing = ui.isSyncing,
+            isRefreshingLive = ui.isRefreshingLive,
             recentChanges = ui.recentChanges,
             bannerMessage = ui.bannerMessage,
-            selectedMatchDetail = ui.selectedMatchDetail,
+            selectedMatchDetail = latestSelectedMatch,
+            selectedMatchLiveDetail = ui.selectedMatchLiveDetail,
+            isLoadingMatchDetail = ui.isLoadingMatchDetail,
+            matchDetailNote = ui.matchDetailNote,
         )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = CalendarUiState(),
     )
-
-    private fun detectScheduleClashes(dayMatches: List<MatchItem>, zoneId: ZoneId): List<String> {
-        if (dayMatches.size < 2) return emptyList()
-        val warnings = mutableListOf<String>()
-        for (i in 0 until dayMatches.size - 1) {
-            val a = dayMatches[i]
-            val b = dayMatches[i + 1]
-            val ta = MatchTimeFormatter.parseInstant(a.utcDate) ?: continue
-            val tb = MatchTimeFormatter.parseInstant(b.utcDate) ?: continue
-            val gapMins = Duration.between(ta, tb).abs().toMinutes()
-            if (gapMins <= 75) {
-                val timeStr = MatchTimeFormatter.formatKickoffTime(a.utcDate, zoneId)
-                warnings += "$timeStr 附近「${a.homeTeamZhName} vs ${a.awayTeamZhName}」与「${b.homeTeamZhName} vs ${b.awayTeamZhName}」时间重叠"
-            }
-        }
-        return warnings
-    }
 
     fun selectDate(date: LocalDate) {
         uiInteraction.update {
@@ -239,15 +304,147 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun openMatchDetail(match: MatchItem) {
-        uiInteraction.update { it.copy(selectedMatchDetail = match) }
+        uiInteraction.update {
+            it.copy(
+                selectedMatchDetail = match,
+                selectedMatchLiveDetail = null,
+                isLoadingMatchDetail = false,
+                matchDetailNote = null,
+            )
+        }
+        // Auto-fetch live events/lineups/stats if match is live, finished, or linked to API-Football
+        if (match.status.isLive || match.status == MatchStatus.FINISHED || match.apiFootballFixtureId != null) {
+            loadMatchLiveDetail(match, force = false)
+        }
+    }
+
+    fun refreshSelectedMatchLiveDetail() {
+        val match = uiState.value.selectedMatchDetail ?: return
+        loadMatchLiveDetail(match, force = true)
+    }
+
+    private fun loadMatchLiveDetail(match: MatchItem, force: Boolean) {
+        viewModelScope.launch {
+            uiInteraction.update { it.copy(isLoadingMatchDetail = true, matchDetailNote = null) }
+            val result = withContext(Dispatchers.IO) {
+                fixtureRepo.fetchMatchLiveDetail(match, forceRefresh = force)
+            }
+            result.onSuccess { detail ->
+                uiInteraction.update {
+                    it.copy(
+                        selectedMatchLiveDetail = detail,
+                        isLoadingMatchDetail = false,
+                        matchDetailNote = if (detail.events.isEmpty() && detail.lineups.isEmpty()) {
+                            "已实时连接：当前暂无进球/事件记录（赛前约 45 分钟公布首发）"
+                        } else {
+                            null
+                        },
+                    )
+                }
+            }.onFailure { err ->
+                uiInteraction.update {
+                    it.copy(
+                        isLoadingMatchDetail = false,
+                        matchDetailNote = err.message ?: "暂无实时赛况详情",
+                    )
+                }
+            }
+        }
     }
 
     fun closeMatchDetail() {
-        uiInteraction.update { it.copy(selectedMatchDetail = null) }
+        uiInteraction.update {
+            it.copy(
+                selectedMatchDetail = null,
+                selectedMatchLiveDetail = null,
+                isLoadingMatchDetail = false,
+                matchDetailNote = null,
+            )
+        }
+    }
+
+    fun openTeamDetailFromStanding(entry: StandingEntry) {
+        val currentState = uiState.value
+        val cached = currentState.teamsByName[entry.teamName.lowercase()]
+            ?: currentState.teamsByName[entry.teamZhName]
+
+        val fallback = cached ?: TeamDetailInfo(
+            teamId = currentState.allMatches.firstOrNull {
+                it.homeTeamName.equals(entry.teamName, true)
+            }?.homeTeamId ?: currentState.allMatches.firstOrNull {
+                it.awayTeamName.equals(entry.teamName, true)
+            }?.awayTeamId ?: 0,
+            competitionCode = entry.competitionCode,
+            name = entry.teamName,
+            shortName = entry.teamName,
+            zhName = entry.teamZhName,
+            crest = entry.teamCrest,
+            venue = "",
+            founded = 0,
+            clubColors = "",
+            coachName = "",
+            coachZhName = "",
+            coachNationality = "",
+            squad = emptyList(),
+        )
+
+        uiInteraction.update {
+            it.copy(
+                selectedTeamDetail = fallback,
+                isLoadingTeamDetail = cached == null && fallback.teamId > 0,
+            )
+        }
+
+        if (cached == null && fallback.teamId > 0) {
+            viewModelScope.launch {
+                val res = withContext(Dispatchers.IO) {
+                    fixtureRepo.fetchTeamDetailOnDemand(
+                        teamName = entry.teamName,
+                        teamId = fallback.teamId,
+                        compCode = entry.competitionCode,
+                        crest = entry.teamCrest,
+                    )
+                }
+                uiInteraction.update { st ->
+                    val loaded = res.getOrNull()
+                    if (st.selectedTeamDetail?.name == entry.teamName && loaded != null) {
+                        st.copy(selectedTeamDetail = loaded, isLoadingTeamDetail = false)
+                    } else {
+                        st.copy(isLoadingTeamDetail = false)
+                    }
+                }
+            }
+        }
+    }
+
+    fun closeTeamDetail() {
+        uiInteraction.update { it.copy(selectedTeamDetail = null, isLoadingTeamDetail = false) }
     }
 
     fun openPlayerDetail(player: StarPlayer) {
         uiInteraction.update { it.copy(selectedStarPlayer = player) }
+    }
+
+    fun openSquadMemberAsPlayer(member: SquadMember, team: TeamDetailInfo) {
+        val player = StarPlayer(
+            id = member.id,
+            name = member.name,
+            zhName = member.zhName,
+            clubName = team.name,
+            clubZhName = team.zhName,
+            clubCrestUrl = team.crest,
+            nationalName = member.nationality,
+            nationalZhName = TeamLocalization.localizeTeam(member.nationality).ifBlank { member.nationality },
+            nationalCrestUrl = TeamAssetCatalog.resolveTeamLogo(member.nationality),
+            positionZh = member.positionZh,
+            nationalityZh = member.nationality,
+            shirtNumber = member.shirtNumber,
+            birthYear = member.birthYear,
+            portraitUrl = member.portraitUrl,
+            competitionCode = team.competitionCode,
+            isTransliterated = member.isTransliterated,
+        )
+        uiInteraction.update { it.copy(selectedTeamDetail = null, selectedStarPlayer = player) }
     }
 
     fun closePlayerDetail() {
@@ -291,7 +488,32 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
                 }
             }.onFailure {
                 uiInteraction.update {
-                    it.copy(isSearchingPlayer = false, bannerMessage = "检索球星失败，请检查网络连接或使用英文名")
+                    it.copy(isSearchingPlayer = false, bannerMessage = "检索球员失败，请检查网络连接或使用英文名")
+                }
+            }
+        }
+    }
+
+    fun refreshLiveScoresNow() {
+        if (uiInteraction.value.isRefreshingLive) return
+        viewModelScope.launch {
+            uiInteraction.update { it.copy(isRefreshingLive = true) }
+            val res = withContext(Dispatchers.IO) {
+                fixtureRepo.refreshLiveScores(force = true)
+            }
+            res.onSuccess { count ->
+                uiInteraction.update {
+                    it.copy(
+                        isRefreshingLive = false,
+                        bannerMessage = if (count > 0) "已实时更新 $count 场进行中赛事比分" else "实时接口已连接，当前所选联赛暂无正在进行的比赛",
+                    )
+                }
+            }.onFailure { err ->
+                uiInteraction.update {
+                    it.copy(
+                        isRefreshingLive = false,
+                        bannerMessage = "实时比分刷新失败：${err.message ?: "请检查网络"}",
+                    )
                 }
             }
         }
@@ -355,9 +577,9 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun saveDataSource(mode: DataSourceMode, githubPagesUrl: String, apiKey: String) {
+    fun saveDataSource(mode: DataSourceMode, githubPagesUrl: String, apiKey: String, apiFootballKey: String = "") {
         viewModelScope.launch {
-            prefsRepo.updateDataSource(mode, githubPagesUrl, apiKey)
+            prefsRepo.updateDataSource(mode, githubPagesUrl, apiKey, apiFootballKey)
             syncNow(simulateDemoChange = false)
         }
     }
@@ -437,6 +659,13 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
     fun showBanner(message: String) {
         uiInteraction.update { it.copy(bannerMessage = message) }
     }
+
+    private data class QuadData(
+        val matches: List<MatchItem>,
+        val standings: List<StandingEntry>,
+        val teams: List<TeamDetailInfo>,
+        val players: List<StarPlayer>,
+    )
 
     companion object {
         val Factory: ViewModelProvider.Factory = viewModelFactory {

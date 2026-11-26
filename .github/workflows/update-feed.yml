@@ -7,8 +7,8 @@ on:
       - "feed/**"
       - ".github/workflows/update-feed.yml"
   schedule:
-    # Auto-refresh match schedules every 6 hours
-    - cron: "0 */6 * * *"
+    # Auto-refresh match schedules every 4 hours (stays well within API quotas)
+    - cron: "0 */4 * * *"
   workflow_dispatch:
 
 permissions:
@@ -39,12 +39,14 @@ jobs:
       - name: Generate Schedule JSON, ICS, and Web Dashboard
         env:
           FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
         run: |
           python feed/generate_feed.py \
             --output-dir _site \
-            --competitions PL,PD,BL1,SA,FL1,CL,WC,EC,INT \
+            --competitions PL,PD,BL1,SA,FL1,CL,UEL,UECL,ACL,J1,J2,KL1,AL,MLS,ELC,DED,PPL,BSA,CLI,WC,EC,UNL,U17WC,U20AC \
             --days-back 3 \
-            --days-ahead 21
+            --days-ahead 21 \
+            --existing-feed-url https://kiki1112.github.io/football-calendar-android/fixtures.json
 
       - name: Upload GitHub Pages Artifact
         uses: actions/upload-pages-artifact@v3

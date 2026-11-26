@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -26,8 +27,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -38,6 +41,48 @@ import com.footballcalendar.app.ui.theme.AppleRed
 import com.footballcalendar.app.ui.theme.AppleRedTint
 import com.footballcalendar.app.ui.theme.InkPrimary
 import com.footballcalendar.app.ui.theme.InkSecondary
+import com.footballcalendar.app.ui.theme.InkTertiary
+
+@Composable
+fun BilingualTextColumn(
+    zhName: String,
+    enName: String,
+    modifier: Modifier = Modifier,
+    zhColor: Color = InkPrimary,
+    enColor: Color = InkTertiary,
+    zhFontSize: TextUnit = 15.sp,
+    enFontSize: TextUnit = 10.sp,
+    zhFontWeight: FontWeight = FontWeight.Bold,
+    alignment: Alignment.Horizontal = Alignment.Start,
+    textAlign: TextAlign = TextAlign.Start,
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = alignment,
+    ) {
+        Text(
+            text = zhName.ifBlank { enName },
+            color = zhColor,
+            fontSize = zhFontSize,
+            fontWeight = zhFontWeight,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = textAlign,
+        )
+        if (enName.isNotBlank()) {
+            Text(
+                text = enName,
+                color = enColor,
+                fontSize = enFontSize,
+                fontWeight = FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = textAlign,
+                lineHeight = (enFontSize.value + 2f).sp,
+            )
+        }
+    }
+}
 
 @Composable
 fun TeamCrest(
@@ -69,8 +114,7 @@ fun TeamCrest(
                 imageLoader = imageLoader,
                 contentDescription = teamName,
                 contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .size(size * 0.78f),
+                modifier = Modifier.size(size * 0.78f),
                 onError = { loadFailed = true },
             )
         } else {

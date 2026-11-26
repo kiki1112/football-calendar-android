@@ -79,9 +79,11 @@ class AppContainer(application: Application) {
     val fixtureRepository = FixtureRepository(
         matchDao = database.matchDao(),
         standingDao = database.standingDao(),
+        teamDao = database.teamDao(),
         prefsRepo = prefsRepository,
         dataSource = fixtureDataSource,
         apiService = apiService,
+        json = json,
     )
 }
 

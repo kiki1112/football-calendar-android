@@ -31,6 +31,8 @@ data class MatchEntity(
     val lastUpdatedUtc: String,
     val homeTeamCrest: String = "",
     val awayTeamCrest: String = "",
+    val elapsedMinutes: Int? = null,
+    val apiFootballFixtureId: Int? = null,
 ) {
     fun toDomain(): MatchItem {
         val localizedHome = TeamLocalization.preferChinese(homeTeamName, homeTeamZhName)
@@ -58,6 +60,8 @@ data class MatchEntity(
             lastUpdatedUtc = lastUpdatedUtc,
             homeTeamCrest = homeTeamCrest.ifBlank { TeamAssetCatalog.resolveTeamLogo(homeTeamName) },
             awayTeamCrest = awayTeamCrest.ifBlank { TeamAssetCatalog.resolveTeamLogo(awayTeamName) },
+            elapsedMinutes = elapsedMinutes,
+            apiFootballFixtureId = apiFootballFixtureId,
         )
     }
 
@@ -85,6 +89,8 @@ data class MatchEntity(
             lastUpdatedUtc = item.lastUpdatedUtc,
             homeTeamCrest = item.homeTeamCrest,
             awayTeamCrest = item.awayTeamCrest,
+            elapsedMinutes = item.elapsedMinutes,
+            apiFootballFixtureId = item.apiFootballFixtureId,
         )
     }
 }

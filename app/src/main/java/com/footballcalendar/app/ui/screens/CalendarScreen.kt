@@ -35,7 +35,6 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.Button
@@ -73,14 +72,20 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.footballcalendar.app.model.CompetitionCatalog
+import com.footballcalendar.app.model.LiveMatchDetail
+import com.footballcalendar.app.model.MatchEventItem
 import com.footballcalendar.app.model.MatchItem
+import com.footballcalendar.app.model.MatchLineupSide
+import com.footballcalendar.app.model.MatchStatPair
 import com.footballcalendar.app.model.ScheduleChange
 import com.footballcalendar.app.model.StandingEntry
 import com.footballcalendar.app.model.StarPlayer
 import com.footballcalendar.app.ui.CalendarUiState
 import com.footballcalendar.app.ui.components.AppleSegmentedControl
+import com.footballcalendar.app.ui.components.BilingualTextColumn
 import com.footballcalendar.app.ui.components.PlayerPortrait
 import com.footballcalendar.app.ui.components.TeamCrest
+import com.footballcalendar.app.ui.theme.UclBlue
 import com.footballcalendar.app.ui.theme.AmberTint
 import com.footballcalendar.app.ui.theme.AmberWarm
 import com.footballcalendar.app.ui.theme.AppleCanvas
@@ -114,6 +119,8 @@ fun CalendarScreen(
     onSelectFilterTab: (Int) -> Unit,
     onSelectLeagueFilter: (String?) -> Unit,
     onRefresh: () -> Unit,
+    onRefreshLiveScores: () -> Unit,
+    onRefreshMatchLiveDetail: () -> Unit,
     onDismissChanges: () -> Unit,
     onOpenMatchDetail: (MatchItem) -> Unit,
     onCloseMatchDetail: () -> Unit,
@@ -164,27 +171,57 @@ fun CalendarScreen(
                             letterSpacing = (-0.5).sp,
                         )
                     }
-                    Surface(
-                        modifier = Modifier.size(38.dp),
-                        shape = CircleShape,
-                        color = Color.White,
-                        shadowElevation = 1.dp,
-                        onClick = { if (!state.isSyncing) onRefresh() },
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            if (state.isSyncing) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(18.dp),
-                                    strokeWidth = 2.dp,
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = AppleRedTint,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, AppleRedBorder),
+                            onClick = { if (!state.isRefreshingLive) onRefreshLiveScores() },
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                if (state.isRefreshingLive) {
+                                    CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp, color = AppleRed)
+                                } else {
+                                    Text("●", color = AppleLiveRed, fontSize = 10.sp)
+                                }
+                                Text(
+                                    text = "实时比分",
                                     color = AppleRed,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
                                 )
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Filled.Refresh,
-                                    contentDescription = "立即同步",
-                                    tint = AppleRed,
-                                    modifier = Modifier.size(20.dp),
-                                )
+                            }
+                        }
+
+                        Surface(
+                            modifier = Modifier.size(38.dp),
+                            shape = CircleShape,
+                            color = Color.White,
+                            shadowElevation = 1.dp,
+                            onClick = { if (!state.isSyncing) onRefresh() },
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                if (state.isSyncing) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        strokeWidth = 2.dp,
+                                        color = AppleRed,
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Filled.Refresh,
+                                        contentDescription = "立即同步",
+                                        tint = AppleRed,
+                                        modifier = Modifier.size(20.dp),
+                                    )
+                                }
                             }
                         }
                     }
@@ -244,7 +281,7 @@ fun CalendarScreen(
                             onClick = { onSelectLeagueFilter("NAT") },
                         )
                         CompetitionCatalog.all
-                            .filter { it.code in state.prefs.followedCompetitions && it.code !in setOf("WC", "EC", "INT") }
+                            .filter { it.code in state.prefs.followedCompetitions }
                             .forEach { comp ->
                                 LeaguePill(
                                     label = comp.zhName,
@@ -282,14 +319,7 @@ fun CalendarScreen(
                 }
             }
 
-            // 6. Schedule Clash Warning Banner
-            if (state.dayClashWarnings.isNotEmpty()) {
-                item {
-                    ClashWarningBanner(warnings = state.dayClashWarnings)
-                }
-            }
-
-            // 7. Day Header
+            // 6. Day Header
             item {
                 Row(
                     modifier = Modifier
@@ -366,11 +396,15 @@ fun CalendarScreen(
         ) {
             MatchDetailBottomSheet(
                 match = detail,
+                liveDetail = state.selectedMatchLiveDetail,
+                isLoadingLiveDetail = state.isLoadingMatchDetail,
+                liveDetailNote = state.matchDetailNote,
                 favoriteTeams = state.prefs.favoriteTeams,
                 isWatchlisted = detail.id in state.prefs.watchlistMatchIds,
                 homeStanding = state.standingFor(detail.competitionCode, detail.homeTeamZhName, detail.homeTeamName),
                 awayStanding = state.standingFor(detail.competitionCode, detail.awayTeamZhName, detail.awayTeamName),
                 relatedPlayers = relatedPlayers,
+                onRefreshLiveDetail = onRefreshMatchLiveDetail,
                 onClickPlayer = onOpenPlayerDetail,
                 onToggleFavorite = onToggleFavoriteTeam,
                 onToggleWatchlist = { onToggleWatchlist(detail.id) },
@@ -422,7 +456,7 @@ private fun HeroNextMatchCard(
 
     val tagText = when {
         match.isInternational -> "国家队焦点"
-        homeRank != null && awayRank != null -> "第${homeRank}名 vs 第${awayRank}名"
+        homeRank != null && awayRank != null -> "No.${homeRank} vs No.${awayRank}"
         else -> "下一场焦点大战"
     }
 
@@ -473,13 +507,15 @@ private fun HeroNextMatchCard(
                 ) {
                     TeamCrest(url = match.homeTeamCrest, teamName = match.homeTeamZhName, size = 44.dp)
                     Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = match.homeTeamZhName,
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                    BilingualTextColumn(
+                        zhName = match.homeTeamZhName,
+                        enName = match.homeTeamName,
+                        zhColor = Color.White,
+                        enColor = Color.White.copy(alpha = 0.78f),
+                        zhFontSize = 14.sp,
+                        enFontSize = 10.sp,
+                        alignment = Alignment.CenterHorizontally,
+                        textAlign = TextAlign.Center,
                     )
                 }
 
@@ -514,13 +550,15 @@ private fun HeroNextMatchCard(
                 ) {
                     TeamCrest(url = match.awayTeamCrest, teamName = match.awayTeamZhName, size = 44.dp)
                     Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = match.awayTeamZhName,
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                    BilingualTextColumn(
+                        zhName = match.awayTeamZhName,
+                        enName = match.awayTeamName,
+                        zhColor = Color.White,
+                        enColor = Color.White.copy(alpha = 0.78f),
+                        zhFontSize = 14.sp,
+                        enFontSize = 10.sp,
+                        alignment = Alignment.CenterHorizontally,
+                        textAlign = TextAlign.Center,
                     )
                 }
             }
@@ -743,45 +781,6 @@ private fun ChangesAlertCard(
 }
 
 @Composable
-private fun ClashWarningBanner(warnings: List<String>) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-        color = AmberTint,
-        shape = RoundedCornerShape(14.dp),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Icon(
-                imageVector = Icons.Filled.Warning,
-                contentDescription = null,
-                tint = AmberWarm,
-                modifier = Modifier.size(18.dp),
-            )
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "开球时间撞车提醒",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF78350F),
-                )
-                Text(
-                    text = warnings.first(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFF92400E),
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-    }
-}
-
-@Composable
 private fun AppleMatchCard(
     match: MatchItem,
     isFavoriteTeamMatch: Boolean,
@@ -826,7 +825,7 @@ private fun AppleMatchCard(
                     )
                     if (homeRank != null && awayRank != null) {
                         Text(
-                            text = "· 第${homeRank} vs 第${awayRank}",
+                            text = "· No.${homeRank} vs No.${awayRank}",
                             color = InkSecondary,
                             style = MaterialTheme.typography.labelSmall,
                         )
@@ -856,8 +855,13 @@ private fun AppleMatchCard(
                         },
                         shape = RoundedCornerShape(999.dp),
                     ) {
+                        val liveBadge = if (match.status.isLive) {
+                            match.elapsedMinutes?.let { "● LIVE ${it}'" } ?: "● LIVE"
+                        } else {
+                            match.status.zhLabel
+                        }
                         Text(
-                            text = if (match.status.isLive) "● LIVE" else match.status.zhLabel,
+                            text = liveBadge,
                             color = when {
                                 match.status.isLive -> Color.White
                                 match.status.isCancelledOrPostponed -> AppleRed
@@ -892,18 +896,19 @@ private fun AppleMatchCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     TeamCrest(url = match.homeTeamCrest, teamName = match.homeTeamZhName, size = 32.dp)
-                    Text(
-                        text = match.homeTeamZhName,
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = InkPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                    BilingualTextColumn(
+                        zhName = match.homeTeamZhName,
+                        enName = match.homeTeamName,
+                        zhFontSize = 14.sp,
+                        enFontSize = 10.sp,
+                        alignment = Alignment.Start,
+                        textAlign = TextAlign.Start,
+                        modifier = Modifier.weight(1f),
                     )
                 }
 
                 Column(
-                    modifier = Modifier.padding(horizontal = 8.dp),
+                    modifier = Modifier.padding(horizontal = 6.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     if (match.homeScore != null && match.awayScore != null) {
@@ -919,14 +924,14 @@ private fun AppleMatchCard(
                                     fontFeatureSettings = "tnum",
                                 ),
                                 color = if (match.status.isLive) AppleRed else InkPrimary,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                             )
                         }
                     } else {
                         Text(
                             text = kickoff,
                             style = TextStyle(
-                                fontSize = 19.sp,
+                                fontSize = 18.sp,
                                 fontWeight = FontWeight.Black,
                                 fontFeatureSettings = "tnum",
                             ),
@@ -945,15 +950,14 @@ private fun AppleMatchCard(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.End,
                 ) {
-                    Text(
-                        text = match.awayTeamZhName,
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = InkPrimary,
+                    BilingualTextColumn(
+                        zhName = match.awayTeamZhName,
+                        enName = match.awayTeamName,
+                        zhFontSize = 14.sp,
+                        enFontSize = 10.sp,
+                        alignment = Alignment.End,
                         textAlign = TextAlign.End,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
+                        modifier = Modifier.weight(1f),
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     TeamCrest(url = match.awayTeamCrest, teamName = match.awayTeamZhName, size = 32.dp)
@@ -1045,11 +1049,15 @@ private fun EmptyDayWhiteCard(
 @Composable
 private fun MatchDetailBottomSheet(
     match: MatchItem,
+    liveDetail: LiveMatchDetail?,
+    isLoadingLiveDetail: Boolean,
+    liveDetailNote: String?,
     favoriteTeams: Set<String>,
     isWatchlisted: Boolean,
     homeStanding: StandingEntry?,
     awayStanding: StandingEntry?,
     relatedPlayers: List<StarPlayer>,
+    onRefreshLiveDetail: () -> Unit,
     onClickPlayer: (StarPlayer) -> Unit,
     onToggleFavorite: (String) -> Unit,
     onToggleWatchlist: () -> Unit,
@@ -1059,7 +1067,7 @@ private fun MatchDetailBottomSheet(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .fillMaxHeight(0.82f)
+            .fillMaxHeight(0.84f)
             .verticalScroll(rememberScrollState())
             .navigationBarsPadding()
             .padding(horizontal = 20.dp, vertical = 10.dp),
@@ -1071,8 +1079,9 @@ private fun MatchDetailBottomSheet(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Surface(color = AppleRedTint, shape = RoundedCornerShape(999.dp)) {
+                val minSuffix = (liveDetail?.elapsedMinutes ?: match.elapsedMinutes)?.let { " ${it}'" } ?: ""
                 Text(
-                    text = "${match.competitionZhName} · ${match.status.zhLabel}",
+                    text = "${match.competitionZhName} · ${match.status.zhLabel}$minSuffix",
                     color = AppleRed,
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
@@ -1110,17 +1119,18 @@ private fun MatchDetailBottomSheet(
                 ) {
                     TeamCrest(url = match.homeTeamCrest, teamName = match.homeTeamZhName, size = 64.dp)
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        match.homeTeamZhName,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.ExtraBold,
+                    BilingualTextColumn(
+                        zhName = match.homeTeamZhName,
+                        enName = match.homeTeamName,
+                        zhFontSize = 15.sp,
+                        enFontSize = 10.sp,
+                        alignment = Alignment.CenterHorizontally,
                         textAlign = TextAlign.Center,
-                        color = InkPrimary,
                     )
                     if (homeStanding != null) {
-                        Spacer(modifier = Modifier.height(2.dp))
+                        Spacer(modifier = Modifier.height(3.dp))
                         Text(
-                            "第 ${homeStanding.rank} 名 · ${homeStanding.points}分",
+                            "No.${homeStanding.rank} · ${homeStanding.points}分",
                             style = MaterialTheme.typography.labelSmall,
                             color = AppleRed,
                             fontWeight = FontWeight.SemiBold,
@@ -1132,9 +1142,11 @@ private fun MatchDetailBottomSheet(
                     modifier = Modifier.padding(horizontal = 8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
+                    val hScore = liveDetail?.homeScore ?: match.homeScore
+                    val aScore = liveDetail?.awayScore ?: match.awayScore
                     Text(
-                        text = if (match.homeScore != null && match.awayScore != null) {
-                            "${match.homeScore} : ${match.awayScore}"
+                        text = if (hScore != null && aScore != null) {
+                            "$hScore : $aScore"
                         } else {
                             MatchTimeFormatter.formatKickoffTime(match.utcDate)
                         },
@@ -1170,17 +1182,18 @@ private fun MatchDetailBottomSheet(
                 ) {
                     TeamCrest(url = match.awayTeamCrest, teamName = match.awayTeamZhName, size = 64.dp)
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        match.awayTeamZhName,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.ExtraBold,
+                    BilingualTextColumn(
+                        zhName = match.awayTeamZhName,
+                        enName = match.awayTeamName,
+                        zhFontSize = 15.sp,
+                        enFontSize = 10.sp,
+                        alignment = Alignment.CenterHorizontally,
                         textAlign = TextAlign.Center,
-                        color = InkPrimary,
                     )
                     if (awayStanding != null) {
-                        Spacer(modifier = Modifier.height(2.dp))
+                        Spacer(modifier = Modifier.height(3.dp))
                         Text(
-                            "第 ${awayStanding.rank} 名 · ${awayStanding.points}分",
+                            "No.${awayStanding.rank} · ${awayStanding.points}分",
                             style = MaterialTheme.typography.labelSmall,
                             color = AppleRed,
                             fontWeight = FontWeight.SemiBold,
@@ -1200,7 +1213,7 @@ private fun MatchDetailBottomSheet(
                 HorizontalDivider(color = AppleDivider)
                 DetailInfoRow(
                     "赛事阶段",
-                    if (match.matchday != null) "${match.competitionZhName} · 第 ${match.matchday} 轮" else match.competitionZhName,
+                    if (match.matchday != null) "${match.competitionZhName} · Round ${match.matchday}" else match.competitionZhName,
                 )
                 HorizontalDivider(color = AppleDivider)
                 DetailInfoRow("比赛场地", match.venue.ifBlank { "待官方公布" })
@@ -1208,6 +1221,14 @@ private fun MatchDetailBottomSheet(
                 DetailInfoRow("当前状态", match.status.zhLabel)
             }
         }
+
+        // Live Match Timeline, Events, Lineups & Stats
+        MatchLiveDetailSection(
+            liveDetail = liveDetail,
+            isLoading = isLoadingLiveDetail,
+            note = liveDetailNote,
+            onRefreshLiveDetail = onRefreshLiveDetail,
+        )
 
         // Standings Comparison if available
         if (homeStanding != null || awayStanding != null) {
@@ -1228,12 +1249,16 @@ private fun MatchDetailBottomSheet(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.weight(1f),
+                            ) {
                                 TeamCrest(url = st.teamCrest, teamName = st.teamZhName, size = 22.dp)
-                                Text(st.teamZhName, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+                                BilingualTextColumn(zhName = st.teamZhName, enName = st.teamName, zhFontSize = 13.sp, enFontSize = 9.sp)
                             }
                             Text(
-                                text = "第${st.rank}名 · ${st.won}胜${st.draw}平${st.lost}负 · 净胜${st.goalDifference} · ${st.points}分",
+                                text = "No.${st.rank} · ${st.won}胜${st.draw}平${st.lost}负 · 净胜${st.goalDifference} · ${st.points}分",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = InkSecondary,
                             )
@@ -1243,11 +1268,11 @@ private fun MatchDetailBottomSheet(
             }
         }
 
-        // Related Star Players
+        // Related Players
         if (relatedPlayers.isNotEmpty()) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    "本场看点球星（点击查看资料）",
+                    "本场关注球员（点击查看资料）",
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold,
                     color = InkPrimary,
@@ -1258,7 +1283,7 @@ private fun MatchDetailBottomSheet(
                         .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    relatedPlayers.forEach { player ->
+                    relatedPlayers.take(16).forEach { player ->
                         Surface(
                             onClick = { onClickPlayer(player) },
                             color = AppleCanvas.copy(alpha = 0.85f),
@@ -1272,6 +1297,7 @@ private fun MatchDetailBottomSheet(
                                 PlayerPortrait(url = player.portraitUrl, playerName = player.zhName, size = 36.dp)
                                 Column {
                                     Text(player.zhName, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
+                                    Text(player.name, fontSize = 9.sp, color = InkTertiary)
                                     Text("#${player.shirtNumber} · ${player.positionZh}", style = MaterialTheme.typography.labelSmall, color = InkSecondary)
                                 }
                             }
@@ -1336,6 +1362,156 @@ private fun MatchDetailBottomSheet(
             }
         }
         Spacer(modifier = Modifier.height(20.dp))
+    }
+}
+
+@Composable
+private fun MatchLiveDetailSection(
+    liveDetail: LiveMatchDetail?,
+    isLoading: Boolean,
+    note: String?,
+    onRefreshLiveDetail: () -> Unit,
+) {
+    Surface(
+        color = AppleCanvas.copy(alpha = 0.85f),
+        shape = RoundedCornerShape(18.dp),
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "实时赛况 · 进球/事件/阵容/统计",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = InkPrimary,
+                )
+                Surface(
+                    onClick = onRefreshLiveDetail,
+                    shape = RoundedCornerShape(999.dp),
+                    color = AppleRedTint,
+                ) {
+                    Text(
+                        text = if (isLoading) "同步中..." else "刷新实时详情",
+                        color = AppleRed,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    )
+                }
+            }
+
+            if (isLoading) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = AppleRed)
+                    Text("正在拉取实时比赛过程详情...", style = MaterialTheme.typography.bodySmall, color = InkSecondary)
+                }
+            }
+
+            if (!note.isNullOrBlank() && liveDetail == null) {
+                Text(note, style = MaterialTheme.typography.bodySmall, color = InkSecondary)
+            }
+
+            if (liveDetail != null) {
+                if (liveDetail.events.isNotEmpty()) {
+                    HorizontalDivider(color = AppleDivider)
+                    Text("比赛事件时间线", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = AppleRed)
+                    liveDetail.events.forEach { ev ->
+                        val minLabel = if (ev.extra != null) "${ev.elapsed}+${ev.extra}'" else "${ev.elapsed}'"
+                        val icon = when {
+                            ev.type.equals("Goal", true) -> "⚽"
+                            ev.type.equals("Card", true) && ev.detail.contains("Red", true) -> "🟥"
+                            ev.type.equals("Card", true) -> "🟨"
+                            ev.type.equals("subst", true) -> "🔄"
+                            else -> "•"
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Surface(color = Color.White, shape = RoundedCornerShape(6.dp)) {
+                                Text(
+                                    text = minLabel,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    style = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFeatureSettings = "tnum"),
+                                    color = AppleRed,
+                                )
+                            }
+                            Text(icon, fontSize = 13.sp)
+                            Column(modifier = Modifier.weight(1f)) {
+                                val assistPart = ev.assistZhName?.let { az ->
+                                    val aEn = ev.assistName ?: ""
+                                    " · 助攻: $az ($aEn)"
+                                } ?: ""
+                                Text(
+                                    text = "${ev.playerZhName}$assistPart",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = InkPrimary,
+                                )
+                                Text(
+                                    text = "${ev.playerName} · ${ev.teamZhName} (${ev.teamName}) · ${ev.detail}",
+                                    fontSize = 10.sp,
+                                    color = InkTertiary,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (liveDetail.lineups.isNotEmpty()) {
+                    HorizontalDivider(color = AppleDivider)
+                    Text("双方阵型与首发", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = UclBlue)
+                    liveDetail.lineups.forEach { side ->
+                        Surface(color = Color.White, shape = RoundedCornerShape(12.dp)) {
+                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    Text("${side.teamZhName} (${side.teamName})", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                                    if (side.formation.isNotBlank()) {
+                                        Text(side.formation, style = MaterialTheme.typography.labelSmall, color = AppleRed, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                                if (side.coachZhName.isNotBlank()) {
+                                    Text("主帅：${side.coachZhName} (${side.coachName})", fontSize = 10.sp, color = InkSecondary)
+                                }
+                                Text(
+                                    text = side.startXI.joinToString(" · ") { "#${it.number} ${it.zhName}(${it.name})" },
+                                    fontSize = 11.sp,
+                                    color = InkPrimary,
+                                    lineHeight = 16.sp,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (liveDetail.stats.isNotEmpty()) {
+                    HorizontalDivider(color = AppleDivider)
+                    Text("技术统计", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = InkPrimary)
+                    liveDetail.stats.forEach { sp ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(sp.homeValue, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = AppleRed, modifier = Modifier.width(56.dp))
+                            Text(sp.labelZh, fontSize = 11.sp, color = InkSecondary, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
+                            Text(sp.awayValue, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = UclBlue, textAlign = TextAlign.End, modifier = Modifier.width(56.dp))
+                        }
+                    }
+                }
+
+                if (!note.isNullOrBlank()) {
+                    Text(note, style = MaterialTheme.typography.bodySmall, color = InkSecondary)
+                }
+            }
+        }
     }
 }
 

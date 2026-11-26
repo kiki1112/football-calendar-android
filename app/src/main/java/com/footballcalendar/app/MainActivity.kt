@@ -53,7 +53,7 @@ import com.footballcalendar.app.ui.theme.InkTertiary
 private enum class AppTab(val route: String, val label: String, val icon: ImageVector) {
     CALENDAR("calendar", "日历", Icons.Filled.CalendarMonth),
     STANDINGS("standings", "积分榜", Icons.Filled.Leaderboard),
-    TEAMS("teams", "球星主队", Icons.Filled.Star),
+    TEAMS("teams", "球员榜", Icons.Filled.Star),
     SETTINGS("settings", "设置", Icons.Filled.Settings),
 }
 
@@ -92,7 +92,7 @@ private fun FootballCalendarRoot(
         }
     }
 
-    val hasModalOpen = state.selectedMatchDetail != null || state.selectedStarPlayer != null
+    val hasModalOpen = state.selectedMatchDetail != null || state.selectedStarPlayer != null || state.selectedTeamDetail != null
     val backdropBlur by animateDpAsState(
         targetValue = if (hasModalOpen) 18.dp else 0.dp,
         label = "backdropBlur",
@@ -149,6 +149,8 @@ private fun FootballCalendarRoot(
                     onSelectFilterTab = viewModel::setCalendarFilterTab,
                     onSelectLeagueFilter = viewModel::selectLeagueFilter,
                     onRefresh = { viewModel.syncNow(simulateDemoChange = false) },
+                    onRefreshLiveScores = viewModel::refreshLiveScoresNow,
+                    onRefreshMatchLiveDetail = viewModel::refreshSelectedMatchLiveDetail,
                     onDismissChanges = viewModel::dismissChangesBanner,
                     onOpenMatchDetail = viewModel::openMatchDetail,
                     onCloseMatchDetail = viewModel::closeMatchDetail,
@@ -171,6 +173,25 @@ private fun FootballCalendarRoot(
                 StandingsScreen(
                     state = state,
                     onSelectLeague = viewModel::selectStandingsLeague,
+                    onClickTeam = viewModel::openTeamDetailFromStanding,
+                    onCloseTeamDetail = viewModel::closeTeamDetail,
+                    onToggleFavoriteTeam = viewModel::toggleFavoriteTeam,
+                    onClickSquadMember = { member, team ->
+                        viewModel.openSquadMemberAsPlayer(member, team)
+                        navController.navigate(AppTab.TEAMS.route) {
+                            popUpTo(AppTab.CALENDAR.route) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
+                    onOpenMatchDetail = { match ->
+                        viewModel.openMatchDetail(match)
+                        navController.navigate(AppTab.CALENDAR.route) {
+                            popUpTo(AppTab.CALENDAR.route) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
                 )
             }
             composable(AppTab.TEAMS.route) {
@@ -196,6 +217,7 @@ private fun FootballCalendarRoot(
                 SettingsScreen(
                     state = state,
                     onSaveDataSource = viewModel::saveDataSource,
+                    onRefreshLiveScores = viewModel::refreshLiveScoresNow,
                     onSimulateDemoUpdate = { viewModel.syncNow(simulateDemoChange = true) },
                     onUpdateSyncSettings = viewModel::updateSyncSettings,
                     onUpdateDisplayAndNotifications = viewModel::updateDisplayAndNotificationSettings,

@@ -42,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.footballcalendar.app.model.DataSourceMode
@@ -58,7 +59,8 @@ import com.footballcalendar.app.util.MatchTimeFormatter
 @Composable
 fun SettingsScreen(
     state: CalendarUiState,
-    onSaveDataSource: (DataSourceMode, String, String) -> Unit,
+    onSaveDataSource: (DataSourceMode, String, String, String) -> Unit,
+    onRefreshLiveScores: () -> Unit,
     onSimulateDemoUpdate: () -> Unit,
     onUpdateSyncSettings: (Boolean, Int, Boolean) -> Unit,
     onUpdateDisplayAndNotifications: (Boolean, Boolean, Int, Boolean) -> Unit,
@@ -71,7 +73,8 @@ fun SettingsScreen(
 
     var selectedMode by remember(state.prefs.dataSourceMode) { mutableStateOf(state.prefs.dataSourceMode) }
     var githubPagesUrl by remember(state.prefs.githubPagesUrl) { mutableStateOf(state.prefs.githubPagesUrl) }
-    var apiKey by remember(state.prefs.footballDataApiKey) { mutableStateOf(state.prefs.footballDataApiKey) }
+    var customFdKey by remember(state.prefs.footballDataApiKey) { mutableStateOf(state.prefs.footballDataApiKey) }
+    var customAfKey by remember(state.prefs.apiFootballKey) { mutableStateOf(state.prefs.apiFootballKey) }
 
     var autoSyncEnabled by remember(state.prefs.autoSyncEnabled) { mutableStateOf(state.prefs.autoSyncEnabled) }
     var intervalHours by remember(state.prefs.syncIntervalHours) { mutableIntStateOf(state.prefs.syncIntervalHours) }
@@ -85,7 +88,8 @@ fun SettingsScreen(
     LaunchedEffect(state.prefs) {
         selectedMode = state.prefs.dataSourceMode
         githubPagesUrl = state.prefs.githubPagesUrl
-        apiKey = state.prefs.footballDataApiKey
+        customFdKey = state.prefs.footballDataApiKey
+        customAfKey = state.prefs.apiFootballKey
         autoSyncEnabled = state.prefs.autoSyncEnabled
         intervalHours = state.prefs.syncIntervalHours
         wifiOnly = state.prefs.wifiOnlySync
@@ -132,7 +136,7 @@ fun SettingsScreen(
                     .padding(start = 20.dp, end = 20.dp, top = 12.dp),
             ) {
                 Text(
-                    text = "看球闹钟与 GitHub 订阅",
+                    text = "看球闹钟与加密内置订阅",
                     style = MaterialTheme.typography.labelMedium,
                     color = AppleRed,
                     fontWeight = FontWeight.SemiBold,
@@ -182,7 +186,7 @@ fun SettingsScreen(
                                     .padding(vertical = 4.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                             ) {
-                                Text("${m.homeTeamZhName} vs ${m.awayTeamZhName}", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                                Text("${m.homeTeamZhName} (${m.homeTeamName}) vs ${m.awayTeamZhName} (${m.awayTeamName})", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
                                 Text(MatchTimeFormatter.formatMonthDayTime(m.utcDate), style = MaterialTheme.typography.labelMedium, color = AppleRed)
                             }
                         }
@@ -191,12 +195,21 @@ fun SettingsScreen(
             }
         }
 
-        // Data Source Group
+        // Data Source Group (Keys built into BuildConfig & GitHub Secrets - never exposed in UI)
         item {
             Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-                Text("数据源配置", style = MaterialTheme.typography.labelLarge, color = InkSecondary, modifier = Modifier.padding(start = 6.dp, bottom = 6.dp))
+                Text("数据源与实时接口配置", style = MaterialTheme.typography.labelLarge, color = InkSecondary, modifier = Modifier.padding(start = 6.dp, bottom = 6.dp))
                 Surface(color = Color.White, shape = RoundedCornerShape(20.dp)) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Surface(color = AppleRedTint, shape = RoundedCornerShape(12.dp)) {
+                            Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                val fdStatus = if (state.prefs.hasBuiltInFootballDataKey()) "已内置加密部署（无需填写）" else "仅通过 GitHub Actions 同步"
+                                val afStatus = if (state.prefs.hasBuiltInApiFootballKey()) "已内置加密部署（Free 100次/日 · 支持实时事件）" else "仅通过 GitHub Actions 同步"
+                                Text("Football-Data：$fdStatus", style = MaterialTheme.typography.labelSmall, color = AppleRed, fontWeight = FontWeight.Bold)
+                                Text("API-Football：$afStatus", style = MaterialTheme.typography.labelSmall, color = InkPrimary, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+
                         DataSourceMode.entries.forEach { mode ->
                             Row(
                                 modifier = Modifier
@@ -225,22 +238,42 @@ fun SettingsScreen(
 
                         if (selectedMode == DataSourceMode.FOOTBALL_DATA_API) {
                             OutlinedTextField(
-                                value = apiKey,
-                                onValueChange = { apiKey = it },
+                                value = customFdKey,
+                                onValueChange = { customFdKey = it },
                                 modifier = Modifier.fillMaxWidth(),
-                                label = { Text("Football-Data.org X-Auth-Token") },
+                                label = { Text("Football-Data Key（留空即用内置 Key）") },
+                                placeholder = { Text("已安全内置部署，无需重复输入") },
+                                visualTransformation = PasswordVisualTransformation(),
+                                singleLine = true,
+                            )
+                            OutlinedTextField(
+                                value = customAfKey,
+                                onValueChange = { customAfKey = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("API-Football Key（留空即用内置 Key）") },
+                                placeholder = { Text("已安全内置部署，无需重复输入") },
+                                visualTransformation = PasswordVisualTransformation(),
                                 singleLine = true,
                             )
                         }
 
                         Button(
-                            onClick = { onSaveDataSource(selectedMode, githubPagesUrl, apiKey) },
+                            onClick = { onSaveDataSource(selectedMode, githubPagesUrl, customFdKey, customAfKey) },
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(14.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = AppleRed),
                             enabled = !state.isSyncing,
                         ) {
-                            Text(if (state.isSyncing) "正在同步..." else "保存并立即同步赛程与积分榜", fontWeight = FontWeight.Bold)
+                            Text(if (state.isSyncing) "正在同步..." else "保存并立即全量同步", fontWeight = FontWeight.Bold)
+                        }
+
+                        OutlinedButton(
+                            onClick = onRefreshLiveScores,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(14.dp),
+                            enabled = !state.isRefreshingLive,
+                        ) {
+                            Text(if (state.isRefreshingLive) "正在刷新实时比分..." else "● 立即拉取全球实时进行中比分（仅耗 1 次配额）")
                         }
 
                         if (selectedMode == DataSourceMode.DEMO) {

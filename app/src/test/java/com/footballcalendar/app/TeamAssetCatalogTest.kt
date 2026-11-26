@@ -4,6 +4,7 @@ import com.footballcalendar.app.model.CompetitionCatalog
 import com.footballcalendar.app.util.TeamAssetCatalog
 import com.footballcalendar.app.util.TeamLocalization
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -15,6 +16,9 @@ class TeamAssetCatalogTest {
         assertTrue(TeamAssetCatalog.resolveTeamLogo("France").startsWith("https://"))
         assertEquals("阿根廷国家队", TeamLocalization.localizeTeam("Argentina"))
         assertEquals("中国国家队", TeamLocalization.localizeTeam("China PR"))
+        assertEquals("日本U17", TeamLocalization.localizeTeam("Japan U17"))
+        assertEquals("神户胜利船", TeamLocalization.localizeTeam("Vissel Kobe"))
+        assertEquals("迈阿密国际", TeamLocalization.localizeTeam("Inter Miami CF"))
         assertEquals("布莱顿", TeamLocalization.localizeTeam("Brighton & Hove Albion FC", "Brighton Hove"))
         assertEquals("伯恩茅斯", TeamLocalization.localizeTeam("AFC Bournemouth", "Bournemouth"))
         assertEquals("布伦特福德", TeamLocalization.localizeTeam("Brentford FC", "Brentford"))
@@ -32,11 +36,37 @@ class TeamAssetCatalogTest {
     }
 
     @Test
-    fun starPlayersCatalogContainsVerifiedPortraitsAndInternationalCompetitionsExist() {
+    fun starPlayersCatalogContainsVerifiedPortraitsAndExpandedCompetitionsExist() {
         assertTrue(TeamAssetCatalog.starPlayers.size >= 16)
         assertTrue(TeamAssetCatalog.starPlayers.all { it.portraitUrl.startsWith("https://") })
-        assertTrue("WC" in CompetitionCatalog.defaultCodes)
-        assertTrue("EC" in CompetitionCatalog.defaultCodes)
-        assertTrue("INT" in CompetitionCatalog.defaultCodes)
+        val requiredCodes = listOf(
+            "PL", "PD", "BL1", "SA", "FL1", "CL", "UEL", "UECL",
+            "ACL", "J1", "J2", "KL1", "AL", "MLS",
+            "WC", "EC", "UNL", "U17WC", "U20AC", "INT",
+        )
+        requiredCodes.forEach { code ->
+            assertTrue("Missing competition $code", code in CompetitionCatalog.defaultCodes)
+        }
+    }
+
+    @Test
+    fun playerLocalizationTranslatesStarsAndTransliteratesYouthPlayers() {
+        val (mbappeZh, mbappeTr) = TeamLocalization.localizePlayer("Kylian Mbappé")
+        assertEquals("姆巴佩", mbappeZh)
+        assertFalse(mbappeTr)
+
+        val (youthZh, youthTr) = TeamLocalization.localizePlayer("Mateo Bramble")
+        assertTrue(youthTr)
+        assertTrue(TeamLocalization.containsCjk(youthZh))
+        assertTrue(youthZh.contains("马特奥"))
+    }
+
+    @Test
+    fun standingZonesClassifyPromotionPlayoffAndRelegation() {
+        assertEquals("UCL" to "欧冠正赛区", TeamLocalization.determineStandingZone("PL", 1, 20))
+        assertEquals("RELEGATION" to "降级区", TeamLocalization.determineStandingZone("PL", 19, 20))
+        assertEquals("PLAYOFF" to "升级附加赛区", TeamLocalization.determineStandingZone("ELC", 4, 24))
+        assertEquals("RELEGATION_PLAYOFF" to "升降级附加赛区", TeamLocalization.determineStandingZone("BL1", 16, 18))
+        assertEquals("PLAYOFF" to "淘汰赛附加赛区", TeamLocalization.determineStandingZone("CL", 12, 36))
     }
 }

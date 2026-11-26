@@ -6,13 +6,14 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [MatchEntity::class, StandingEntity::class],
-    version = 2,
+    entities = [MatchEntity::class, StandingEntity::class, TeamEntity::class],
+    version = 3,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun matchDao(): MatchDao
     abstract fun standingDao(): StandingDao
+    abstract fun teamDao(): TeamDao
 
     companion object {
         fun build(context: Context): AppDatabase =

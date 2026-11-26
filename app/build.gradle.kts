@@ -14,8 +14,15 @@ android {
         applicationId = "com.footballcalendar.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "2.0.2"
+        versionCode = 4
+        versionName = "2.1.0"
+
+        val builtInFootballDataKey = ((project.findProperty("FOOTBALL_DATA_API_KEY") as? String)
+            ?: System.getenv("FOOTBALL_DATA_API_KEY") ?: "").replace("\\", "\\\\").replace("\"", "\\\"")
+        val builtInApiFootballKey = ((project.findProperty("API_FOOTBALL_KEY") as? String)
+            ?: System.getenv("API_FOOTBALL_KEY") ?: "").replace("\\", "\\\\").replace("\"", "\\\"")
+        buildConfigField("String", "BUILTIN_FOOTBALL_DATA_KEY", "\"$builtInFootballDataKey\"")
+        buildConfigField("String", "BUILTIN_API_FOOTBALL_KEY", "\"$builtInApiFootballKey\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

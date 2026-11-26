@@ -27,6 +27,8 @@ data class StandingEntity(
     val goalDifference: Int,
     val points: Int,
     val form: String,
+    val zoneType: String = "NONE",
+    val zoneLabel: String = "",
 ) {
     fun toDomain(): StandingEntry = StandingEntry(
         competitionCode = competitionCode,
@@ -41,6 +43,8 @@ data class StandingEntity(
         goalDifference = goalDifference,
         points = points,
         form = form,
+        zoneType = zoneType,
+        zoneLabel = zoneLabel,
     )
 
     companion object {
@@ -58,6 +62,8 @@ data class StandingEntity(
             goalDifference = entry.goalDifference,
             points = entry.points,
             form = entry.form,
+            zoneType = entry.zoneType,
+            zoneLabel = entry.zoneLabel,
         )
     }
 }

@@ -24,15 +24,52 @@ interface FeedApiService {
         @Path("code") competitionCode: String,
     ): FootballDataStandingsResponse
 
+    @GET("v4/competitions/{code}/teams")
+    suspend fun fetchCompetitionTeams(
+        @Header("X-Auth-Token") apiKey: String,
+        @Path("code") competitionCode: String,
+    ): FootballDataTeamsResponse
+
+    @GET("v4/competitions/{code}/scorers")
+    suspend fun fetchCompetitionScorers(
+        @Header("X-Auth-Token") apiKey: String,
+        @Path("code") competitionCode: String,
+        @Query("limit") limit: Int = 30,
+    ): FootballDataScorersResponse
+
+    @GET
+    suspend fun fetchApiFootballFixtures(
+        @Url url: String,
+        @Header("x-apisports-key") apiKey: String,
+    ): ApiFootballFixturesResponse
+
+    @GET
+    suspend fun fetchApiFootballSquad(
+        @Url url: String,
+        @Header("x-apisports-key") apiKey: String,
+    ): ApiFootballSquadResponse
+
+    @GET
+    suspend fun fetchApiFootballTeamInfo(
+        @Url url: String,
+        @Header("x-apisports-key") apiKey: String,
+    ): ApiFootballTeamInfoResponse
+
+    @GET
+    suspend fun fetchApiFootballCoaches(
+        @Url url: String,
+        @Header("x-apisports-key") apiKey: String,
+    ): ApiFootballCoachesResponse
+
     @GET
     suspend fun fetchWikipediaSummary(
         @Url url: String,
-        @Header("User-Agent") userAgent: String = "FootballCalendarApp/2.0 (https://github.com/kiki1112/football-calendar-android)",
+        @Header("User-Agent") userAgent: String = "FootballCalendarApp/2.1 (https://github.com/kiki1112/football-calendar-android)",
     ): WikipediaSummaryResponse
 
     @GET
     suspend fun fetchWikipediaLanglinks(
         @Url url: String,
-        @Header("User-Agent") userAgent: String = "FootballCalendarApp/2.0 (https://github.com/kiki1112/football-calendar-android)",
+        @Header("User-Agent") userAgent: String = "FootballCalendarApp/2.1 (https://github.com/kiki1112/football-calendar-android)",
     ): WikipediaLanglinksApiResponse
 }
