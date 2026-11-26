@@ -18,6 +18,7 @@ import com.footballcalendar.app.model.MatchItem
 import com.footballcalendar.app.model.MatchStatus
 import com.footballcalendar.app.model.ScheduleChange
 import com.footballcalendar.app.model.ScheduleChangeType
+import com.footballcalendar.app.model.SquadMember
 import com.footballcalendar.app.model.StandingEntry
 import com.footballcalendar.app.model.StarPlayer
 import com.footballcalendar.app.model.TeamDetailInfo
