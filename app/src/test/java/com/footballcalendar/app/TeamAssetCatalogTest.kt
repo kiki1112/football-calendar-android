@@ -1,5 +1,6 @@
 package com.footballcalendar.app
 
+import com.footballcalendar.app.data.remote.EspnLeagueCatalog
 import com.footballcalendar.app.model.CompetitionCatalog
 import com.footballcalendar.app.util.TeamAssetCatalog
 import com.footballcalendar.app.util.TeamLocalization
@@ -68,5 +69,22 @@ class TeamAssetCatalogTest {
         assertEquals("PLAYOFF" to "升级附加赛区", TeamLocalization.determineStandingZone("ELC", 4, 24))
         assertEquals("RELEGATION_PLAYOFF" to "升降级附加赛区", TeamLocalization.determineStandingZone("BL1", 16, 18))
         assertEquals("PLAYOFF" to "淘汰赛附加赛区", TeamLocalization.determineStandingZone("CL", 12, 36))
+    }
+
+    @Test
+    fun espnLeaguesAndZonesLocalizeCleanly() {
+        assertEquals("uefa.europa", EspnLeagueCatalog.slugForCode("UEL"))
+        assertEquals("MLS", EspnLeagueCatalog.codeForSlug("usa.1"))
+        assertEquals("东部联盟", TeamLocalization.localizeEspnGroup("Eastern Conference"))
+        assertEquals("东亚区", TeamLocalization.localizeEspnGroup("East Region"))
+        assertEquals("", TeamLocalization.localizeEspnGroup("Regular Season"))
+        assertEquals(
+            "UEL" to "欧联杯区",
+            TeamLocalization.localizeEspnZone("UEFA Europa League", "PL", 5, 20),
+        )
+        assertEquals(
+            "PLAYOFF" to "季后/淘汰附加赛区",
+            TeamLocalization.localizeEspnZone("Finals Series", "AL", 3, 12),
+        )
     }
 }

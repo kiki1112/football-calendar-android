@@ -23,6 +23,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -31,7 +32,11 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
@@ -83,6 +88,31 @@ private fun FootballCalendarRoot(
     val snackbarHostState = remember { SnackbarHostState() }
     val backStack by navController.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route ?: AppTab.CALENDAR.route
+    val lifecycleOwner = LocalContext.current as? LifecycleOwner
+
+    DisposableEffect(lifecycleOwner) {
+        val owner = lifecycleOwner
+        if (owner == null) {
+            viewModel.setForegroundActive(true)
+            onDispose { viewModel.setForegroundActive(false) }
+        } else {
+            val observer = LifecycleEventObserver { _, event ->
+                when (event) {
+                    Lifecycle.Event.ON_RESUME -> viewModel.setForegroundActive(true)
+                    Lifecycle.Event.ON_PAUSE -> viewModel.setForegroundActive(false)
+                    else -> Unit
+                }
+            }
+            owner.lifecycle.addObserver(observer)
+            if (owner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+                viewModel.setForegroundActive(true)
+            }
+            onDispose {
+                owner.lifecycle.removeObserver(observer)
+                viewModel.setForegroundActive(false)
+            }
+        }
+    }
 
     LaunchedEffect(state.bannerMessage) {
         val msg = state.bannerMessage
@@ -149,8 +179,6 @@ private fun FootballCalendarRoot(
                     onSelectFilterTab = viewModel::setCalendarFilterTab,
                     onSelectLeagueFilter = viewModel::selectLeagueFilter,
                     onRefresh = { viewModel.syncNow(simulateDemoChange = false) },
-                    onRefreshLiveScores = viewModel::refreshLiveScoresNow,
-                    onRefreshMatchLiveDetail = viewModel::refreshSelectedMatchLiveDetail,
                     onDismissChanges = viewModel::dismissChangesBanner,
                     onOpenMatchDetail = viewModel::openMatchDetail,
                     onCloseMatchDetail = viewModel::closeMatchDetail,
@@ -217,7 +245,6 @@ private fun FootballCalendarRoot(
                 SettingsScreen(
                     state = state,
                     onSaveDataSource = viewModel::saveDataSource,
-                    onRefreshLiveScores = viewModel::refreshLiveScoresNow,
                     onSimulateDemoUpdate = { viewModel.syncNow(simulateDemoChange = true) },
                     onUpdateSyncSettings = viewModel::updateSyncSettings,
                     onUpdateDisplayAndNotifications = viewModel::updateDisplayAndNotificationSettings,

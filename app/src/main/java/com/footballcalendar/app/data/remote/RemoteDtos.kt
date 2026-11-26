@@ -26,6 +26,112 @@ data class GitHubFeedResponse(
     val standings: List<GitHubFeedStandingDto> = emptyList(),
     val players: List<GitHubFeedPlayerDto> = emptyList(),
     val teams: List<GitHubFeedTeamDto> = emptyList(),
+    val liveDetails: Map<String, GitHubFeedLiveDetailDto> = emptyMap(),
+)
+
+@Serializable
+data class GitHubFeedLiveDetailDto(
+    val matchId: String = "",
+    val fixtureId: Int = 0,
+    val elapsedMinutes: Int? = null,
+    val statusShort: String = "",
+    val homeScore: Int? = null,
+    val awayScore: Int? = null,
+    val events: List<GitHubFeedEventDto> = emptyList(),
+    val lineups: List<GitHubFeedLineupDto> = emptyList(),
+    val stats: List<GitHubFeedStatPairDto> = emptyList(),
+) {
+    fun toDomain(nowMillis: Long): LiveMatchDetail = LiveMatchDetail(
+        matchId = matchId,
+        fixtureId = fixtureId,
+        elapsedMinutes = elapsedMinutes,
+        statusShort = statusShort,
+        homeScore = homeScore,
+        awayScore = awayScore,
+        events = events.map {
+            MatchEventItem(
+                elapsed = it.elapsed,
+                extra = it.extra,
+                teamName = it.teamName,
+                teamZhName = TeamLocalization.preferChinese(it.teamName, it.teamZhName),
+                isHomeTeam = it.isHomeTeam,
+                playerName = it.playerName,
+                playerZhName = it.playerZhName.ifBlank { TeamLocalization.localizePlayer(it.playerName).first },
+                assistName = it.assistName,
+                assistZhName = it.assistName?.let { an -> it.assistZhName?.ifBlank { null } ?: TeamLocalization.localizePlayer(an).first },
+                type = it.type,
+                detail = it.detail,
+            )
+        },
+        lineups = lineups.map { l ->
+            MatchLineupSide(
+                teamName = l.teamName,
+                teamZhName = TeamLocalization.preferChinese(l.teamName, l.teamZhName),
+                formation = l.formation,
+                coachName = l.coachName,
+                coachZhName = l.coachZhName.ifBlank { TeamLocalization.localizeCoach(l.coachName) },
+                startXI = l.startXI.map { s ->
+                    LineupPlayerItem(
+                        name = s.name,
+                        zhName = s.zhName.ifBlank { TeamLocalization.localizePlayer(s.name).first },
+                        number = s.number,
+                        pos = s.pos,
+                    )
+                },
+                substitutes = l.substitutes.map { s ->
+                    LineupPlayerItem(
+                        name = s.name,
+                        zhName = s.zhName.ifBlank { TeamLocalization.localizePlayer(s.name).first },
+                        number = s.number,
+                        pos = s.pos,
+                    )
+                },
+            )
+        },
+        stats = stats.map { MatchStatPair(it.labelZh, it.homeValue, it.awayValue) },
+        syncedAtMillis = nowMillis,
+    )
+}
+
+@Serializable
+data class GitHubFeedEventDto(
+    val elapsed: Int = 0,
+    val extra: Int? = null,
+    val teamName: String = "",
+    val teamZhName: String = "",
+    val isHomeTeam: Boolean = true,
+    val playerName: String = "",
+    val playerZhName: String = "",
+    val assistName: String? = null,
+    val assistZhName: String? = null,
+    val type: String = "",
+    val detail: String = "",
+)
+
+@Serializable
+data class GitHubFeedLineupPlayerDto(
+    val name: String = "",
+    val zhName: String = "",
+    val number: Int = 0,
+    val pos: String = "",
+)
+
+@Serializable
+data class GitHubFeedLineupDto(
+    val teamName: String = "",
+    val teamZhName: String = "",
+    val formation: String = "",
+    val coachName: String = "",
+    val coachZhName: String = "",
+    val startXI: List<GitHubFeedLineupPlayerDto> = emptyList(),
+    val substitutes: List<GitHubFeedLineupPlayerDto> = emptyList(),
+)
+
+@Serializable
+data class GitHubFeedStatPairDto(
+    val labelZh: String = "",
+    val homeValue: String = "",
+    val awayValue: String = "",
 )
 
 @Serializable
@@ -54,6 +160,8 @@ data class GitHubFeedMatchDto(
     val lastUpdatedUtc: String = "",
     val elapsedMinutes: Int? = null,
     val apiFootballFixtureId: Int? = null,
+    val espnSlug: String? = null,
+    val espnEventId: String? = null,
 ) {
     fun toDomain(): MatchItem = MatchItem(
         id = id,
@@ -80,6 +188,8 @@ data class GitHubFeedMatchDto(
         awayTeamCrest = TeamAssetCatalog.resolveTeamLogo(awayTeamName, awayTeamCrest),
         elapsedMinutes = elapsedMinutes,
         apiFootballFixtureId = apiFootballFixtureId,
+        espnSlug = espnSlug,
+        espnEventId = espnEventId,
     )
 }
 
@@ -99,6 +209,7 @@ data class GitHubFeedStandingDto(
     val form: String = "",
     val zoneType: String = "NONE",
     val zoneLabel: String = "",
+    val groupName: String = "",
 ) {
     fun toDomain(totalRows: Int): StandingEntry {
         val (resolvedType, resolvedLabel) = if (zoneType != "NONE" && zoneLabel.isNotBlank()) {
@@ -121,6 +232,7 @@ data class GitHubFeedStandingDto(
             form = form,
             zoneType = resolvedType,
             zoneLabel = resolvedLabel,
+            groupName = groupName,
         )
     }
 }

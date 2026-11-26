@@ -290,6 +290,14 @@ TEAM_ZH_MAP: dict[str, str] = {
     "Maccabi Tel Aviv": "特拉维夫马卡比",
 
     # Brazil & CONMEBOL
+    "Feyenoord": "费耶诺德",
+    "Kashima": "鹿岛鹿角",
+    "Port FC": "泰港",
+    "Port MTI FC": "泰港",
+    "Besiktas": "贝西克塔斯",
+    "Hapoel Be'er": "贝尔谢巴夏普尔",
+    "Vitoria": "维多利亚",
+    "Internazionale": "国际米兰",
     "CR Flamengo": "弗拉门戈",
     "Flamengo": "弗拉门戈",
     "SE Palmeiras": "帕尔梅拉斯",
@@ -940,3 +948,49 @@ def localize_position(pos: str | None) -> str:
         return "球员"
     p = pos.strip()
     return POSITION_ZH_MAP.get(p, p)
+
+
+def localize_espn_group(name: str | None) -> str:
+    if not name:
+        return ""
+    low = name.strip().lower()
+    if low in {"regular season", "league phase", "overall"}:
+        return ""
+    mapping = {
+        "eastern conference": "东部联盟",
+        "western conference": "西部联盟",
+        "east region": "东亚区",
+        "west region": "西亚区",
+        "east": "东区",
+        "west": "西区",
+    }
+    if low in mapping:
+        return mapping[low]
+    if low.startswith("group "):
+        return "小组 " + name.strip()[6:]
+    return name.strip()
+
+
+def localize_espn_zone(desc: str | None, code: str, rank: int, total_rows: int) -> tuple[str, str]:
+    d = (desc or "").lower()
+    if "relegation playoff" in d or "relegation play-off" in d:
+        return ("RELEGATION_PLAYOFF", "升降级附加赛区")
+    if "relegation" in d or "relegated" in d:
+        return ("RELEGATION", "降级区")
+    if "champions league" in d and ("qualif" in d or "playoff" in d):
+        return ("UCL_QUAL", "欧冠资格赛区")
+    if "champions league" in d:
+        return ("UCL", "欧冠正赛区")
+    if "europa league" in d:
+        return ("UEL", "欧联杯区")
+    if "conference league" in d:
+        return ("UECL", "欧协联区")
+    if "round of 16" in d or "next round" in d or "knockout stage" in d:
+        return ("UCL", "16强直通区")
+    if "knockout" in d or "playoff" in d or "play-off" in d or "finals series" in d or "final series" in d:
+        return ("PLAYOFF", "季后/淘汰附加赛区")
+    if "promotion playoff" in d:
+        return ("PLAYOFF", "升级附加赛区")
+    if "promotion" in d or "promoted" in d:
+        return ("PROMOTION", "升级区")
+    return ("NONE", "")

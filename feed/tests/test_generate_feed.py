@@ -77,8 +77,45 @@ class GenerateFeedTest(unittest.TestCase):
         self.assertEqual(gf.determine_standing_zone("ELC", 4, 24), ("PLAYOFF", "升级附加赛区"))
         self.assertEqual(gf.determine_standing_zone("BL1", 16, 18), ("RELEGATION_PLAYOFF", "升降级附加赛区"))
         self.assertEqual(gf.determine_standing_zone("CL", 12, 36), ("PLAYOFF", "淘汰赛附加赛区"))
+        self.assertEqual(loc.localize_espn_zone("Qualifies for round of 16", "UEL", 1, 36), ("UCL", "16强直通区"))
+        self.assertEqual(loc.localize_espn_group("Eastern Conference"), "东部联盟")
 
-    def test_write_feed_outputs_creates_v3_json_ics_and_html(self) -> None:
+    def test_normalize_espn_event_parses_live_clock_and_teams(self) -> None:
+        raw_ev = {
+            "id": "765242",
+            "date": "2026-11-26T17:45Z",
+            "status": {"displayClock": "67'", "type": {"state": "in", "name": "STATUS_SECOND_HALF"}},
+            "competitions": [
+                {
+                    "venue": {"fullName": "Sukru Saracoglu"},
+                    "competitors": [
+                        {
+                            "homeAway": "home",
+                            "score": "2",
+                            "team": {"id": "436", "displayName": "Fenerbahce", "shortDisplayName": "Fenerbahce", "logo": "https://a.espncdn.com/i/teamlogos/soccer/500/436.png"},
+                        },
+                        {
+                            "homeAway": "away",
+                            "score": "1",
+                            "team": {"id": "134", "displayName": "VfB Stuttgart", "shortDisplayName": "Stuttgart", "logo": "https://a.espncdn.com/i/teamlogos/soccer/500/134.png"},
+                        },
+                    ],
+                }
+            ],
+        }
+        m = gf.normalize_espn_event(raw_ev, "uefa.europa")
+        self.assertIsNotNone(m)
+        assert m is not None
+        self.assertEqual(m.competitionCode, "UEL")
+        self.assertEqual(m.homeTeamZhName, "费内巴切")
+        self.assertEqual(m.awayTeamZhName, "斯图加特")
+        self.assertEqual(m.status, "LIVE")
+        self.assertEqual(m.elapsedMinutes, 67)
+        self.assertEqual(m.homeScore, 2)
+        self.assertEqual(m.espnSlug, "uefa.europa")
+        self.assertEqual(m.espnEventId, "765242")
+
+    def test_write_feed_outputs_creates_v4_json_ics_and_html(self) -> None:
         anchor = dt.datetime(2026, 11, 25, 12, 0, tzinfo=dt.timezone.utc)
         matches = gf.generate_demo_matches(anchor)
         standings = gf.generate_demo_standings()
@@ -108,11 +145,12 @@ class GenerateFeedTest(unittest.TestCase):
             )
 
             fixtures_json = json.loads((out_dir / "fixtures.json").read_text(encoding="utf-8"))
-            self.assertEqual(fixtures_json["schemaVersion"], 3)
+            self.assertEqual(fixtures_json["schemaVersion"], 4)
             self.assertEqual(len(fixtures_json["matches"]), len(matches))
             self.assertEqual(len(fixtures_json["standings"]), len(standings))
             self.assertEqual(len(fixtures_json["players"]), len(players))
             self.assertEqual(len(fixtures_json["teams"]), 1)
+            self.assertIn("liveDetails", fixtures_json)
 
             self.assertTrue((out_dir / "ics" / "WC.ics").exists())
             self.assertTrue((out_dir / "ics" / "J1.ics").exists())

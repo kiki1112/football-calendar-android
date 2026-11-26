@@ -29,6 +29,7 @@ data class StandingEntity(
     val form: String,
     val zoneType: String = "NONE",
     val zoneLabel: String = "",
+    val groupName: String = "",
 ) {
     fun toDomain(): StandingEntry = StandingEntry(
         competitionCode = competitionCode,
@@ -45,11 +46,12 @@ data class StandingEntity(
         form = form,
         zoneType = zoneType,
         zoneLabel = zoneLabel,
+        groupName = groupName,
     )
 
     companion object {
         fun fromDomain(entry: StandingEntry): StandingEntity = StandingEntity(
-            id = "${entry.competitionCode}_${entry.rank}_${entry.teamName}",
+            id = "${entry.competitionCode}_${entry.groupName}_${entry.rank}_${entry.teamName}",
             competitionCode = entry.competitionCode,
             rank = entry.rank,
             teamName = entry.teamName,
@@ -64,16 +66,17 @@ data class StandingEntity(
             form = entry.form,
             zoneType = entry.zoneType,
             zoneLabel = entry.zoneLabel,
+            groupName = entry.groupName,
         )
     }
 }
 
 @Dao
 interface StandingDao {
-    @Query("SELECT * FROM standings ORDER BY competitionCode ASC, rank ASC")
+    @Query("SELECT * FROM standings ORDER BY competitionCode ASC, groupName ASC, rank ASC")
     fun observeAllStandings(): Flow<List<StandingEntity>>
 
-    @Query("SELECT * FROM standings ORDER BY competitionCode ASC, rank ASC")
+    @Query("SELECT * FROM standings ORDER BY competitionCode ASC, groupName ASC, rank ASC")
     suspend fun getAllStandingsOnce(): List<StandingEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

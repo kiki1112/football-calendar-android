@@ -3,6 +3,7 @@ package com.footballcalendar.app.data.remote
 import com.footballcalendar.app.data.preferences.UserPreferences
 import com.footballcalendar.app.model.CompetitionCatalog
 import com.footballcalendar.app.model.DataSourceMode
+import com.footballcalendar.app.model.LiveMatchDetail
 import com.footballcalendar.app.model.MatchItem
 import com.footballcalendar.app.model.MatchStatus
 import com.footballcalendar.app.model.StandingEntry
@@ -21,6 +22,7 @@ data class SyncPayload(
     val standings: List<StandingEntry>,
     val players: List<StarPlayer>,
     val teams: List<TeamDetailInfo> = emptyList(),
+    val liveDetails: Map<String, LiveMatchDetail> = emptyMap(),
 )
 
 interface FixtureDataSource {
@@ -208,8 +210,16 @@ class GitHubPagesFixtureDataSource(
             .ifEmpty { TeamAssetCatalog.starPlayers }
 
         val teams = response.teams.map { it.toDomain() }
+        val nowMs = System.currentTimeMillis()
+        val liveDetails = response.liveDetails.mapValues { (_, dto) -> dto.toDomain(nowMs) }
 
-        return SyncPayload(matches = matches, standings = standings, players = players, teams = teams)
+        return SyncPayload(
+            matches = matches,
+            standings = standings,
+            players = players,
+            teams = teams,
+            liveDetails = liveDetails,
+        )
     }
 
     companion object {
@@ -311,7 +321,7 @@ class FootballDataApiFixtureDataSource(
             }
         }
 
-        // 2. API-Football 3-day window (yesterday, today, tomorrow = 3 requests)
+        // 2. API-Football 3-day window (yesterday, today, tomorrow -> covers J2/KL1/U20AC & live ids)
         if (afKey.isNotEmpty()) {
             val nonFdTargets = prefs.followedCompetitions.filter { it !in fdSupported }
             for (delta in -1L..1L) {
@@ -322,30 +332,43 @@ class FootballDataApiFixtureDataSource(
                         apiKey = afKey,
                     )
                     resp.response.mapNotNull { it.toMatchItem() }.forEach { afMatch ->
-                        if (afMatch.competitionCode in nonFdTargets || collected.none { (_, ex) ->
-                                ex.competitionCode == afMatch.competitionCode &&
-                                    ex.homeTeamZhName == afMatch.homeTeamZhName &&
-                                    ex.awayTeamZhName == afMatch.awayTeamZhName
-                            }
-                        ) {
-                            collected[afMatch.id] = afMatch
-                        } else {
-                            // Enrich matched FD fixture with apiFootballFixtureId + live score
-                            collected.entries.firstOrNull { (_, ex) ->
-                                ex.competitionCode == afMatch.competitionCode &&
-                                    ex.homeTeamZhName == afMatch.homeTeamZhName &&
-                                    ex.awayTeamZhName == afMatch.awayTeamZhName
-                            }?.let { (key, existing) ->
-                                collected[key] = existing.copy(
-                                    apiFootballFixtureId = afMatch.apiFootballFixtureId,
-                                    elapsedMinutes = afMatch.elapsedMinutes,
-                                    homeScore = if (afMatch.status.isLive || afMatch.status == MatchStatus.FINISHED) afMatch.homeScore else existing.homeScore,
-                                    awayScore = if (afMatch.status.isLive || afMatch.status == MatchStatus.FINISHED) afMatch.awayScore else existing.awayScore,
-                                    status = if (afMatch.status.isLive || afMatch.status == MatchStatus.FINISHED) afMatch.status else existing.status,
-                                )
-                            }
-                        }
+                        mergeOrAddMatch(collected, afMatch, forceAdd = afMatch.competitionCode in nonFdTargets)
                     }
+                }
+            }
+        }
+
+        // 3. ESPN Free Public Endpoints (schedules, real-time clocks/scores & UEL/UECL/ACL/J1/AL/MLS standings)
+        val espnDateFmt = DateTimeFormatter.BASIC_ISO_DATE
+        for (delta in -1L..5L) {
+            val ds = espnDateFmt.format(today.plusDays(delta))
+            runCatching {
+                val sb = apiService.fetchEspnScoreboard(
+                    "https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard?dates=$ds",
+                )
+                sb.events.mapNotNull { it.toMatchItem() }.forEach { espnMatch ->
+                    if (espnMatch.competitionCode in prefs.followedCompetitions) {
+                        mergeOrAddMatch(collected, espnMatch, forceAdd = espnMatch.competitionCode !in fdSupported)
+                    }
+                }
+            }
+        }
+        for (code in EspnLeagueCatalog.standingsCodes.filter { it in prefs.followedCompetitions }) {
+            val slug = EspnLeagueCatalog.slugForCode(code) ?: continue
+            runCatching {
+                val sb = apiService.fetchEspnScoreboard(
+                    "https://site.api.espn.com/apis/site/v2/sports/soccer/$slug/scoreboard",
+                )
+                sb.events.mapNotNull { it.toMatchItem(slug) }.forEach { espnMatch ->
+                    mergeOrAddMatch(collected, espnMatch, forceAdd = true)
+                }
+            }
+            if (standings.none { it.competitionCode == code }) {
+                runCatching {
+                    val st = apiService.fetchEspnStandings(
+                        "https://site.api.espn.com/apis/v2/sports/soccer/$slug/standings",
+                    )
+                    standings += st.toStandingEntries(code)
                 }
             }
         }
@@ -358,6 +381,34 @@ class FootballDataApiFixtureDataSource(
             players = resolvedPlayers,
             teams = teamsList,
         )
+    }
+
+    private fun mergeOrAddMatch(
+        collected: MutableMap<String, MatchItem>,
+        incoming: MatchItem,
+        forceAdd: Boolean,
+    ) {
+        val existingEntry = collected.entries.firstOrNull { (_, ex) ->
+            ex.competitionCode == incoming.competitionCode &&
+                ex.homeTeamZhName == incoming.homeTeamZhName &&
+                ex.awayTeamZhName == incoming.awayTeamZhName
+        }
+        if (existingEntry != null) {
+            val (key, existing) = existingEntry
+            val preferIncomingScore = (incoming.status.isLive || incoming.status == MatchStatus.FINISHED) &&
+                incoming.homeScore != null && incoming.awayScore != null
+            collected[key] = existing.copy(
+                apiFootballFixtureId = incoming.apiFootballFixtureId ?: existing.apiFootballFixtureId,
+                espnSlug = incoming.espnSlug ?: existing.espnSlug,
+                espnEventId = incoming.espnEventId ?: existing.espnEventId,
+                elapsedMinutes = incoming.elapsedMinutes ?: existing.elapsedMinutes,
+                homeScore = if (preferIncomingScore) incoming.homeScore else existing.homeScore,
+                awayScore = if (preferIncomingScore) incoming.awayScore else existing.awayScore,
+                status = if (incoming.status.isLive || incoming.status == MatchStatus.FINISHED) incoming.status else existing.status,
+            )
+        } else if (forceAdd) {
+            collected[incoming.id] = incoming
+        }
     }
 }
 

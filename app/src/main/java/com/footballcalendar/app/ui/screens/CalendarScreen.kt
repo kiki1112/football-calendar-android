@@ -119,8 +119,6 @@ fun CalendarScreen(
     onSelectFilterTab: (Int) -> Unit,
     onSelectLeagueFilter: (String?) -> Unit,
     onRefresh: () -> Unit,
-    onRefreshLiveScores: () -> Unit,
-    onRefreshMatchLiveDetail: () -> Unit,
     onDismissChanges: () -> Unit,
     onOpenMatchDetail: (MatchItem) -> Unit,
     onCloseMatchDetail: () -> Unit,
@@ -171,57 +169,27 @@ fun CalendarScreen(
                             letterSpacing = (-0.5).sp,
                         )
                     }
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                    Surface(
+                        modifier = Modifier.size(38.dp),
+                        shape = CircleShape,
+                        color = Color.White,
+                        shadowElevation = 1.dp,
+                        onClick = { if (!state.isSyncing) onRefresh() },
                     ) {
-                        Surface(
-                            shape = RoundedCornerShape(999.dp),
-                            color = AppleRedTint,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, AppleRedBorder),
-                            onClick = { if (!state.isRefreshingLive) onRefreshLiveScores() },
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            ) {
-                                if (state.isRefreshingLive) {
-                                    CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp, color = AppleRed)
-                                } else {
-                                    Text("●", color = AppleLiveRed, fontSize = 10.sp)
-                                }
-                                Text(
-                                    text = "实时比分",
+                        Box(contentAlignment = Alignment.Center) {
+                            if (state.isSyncing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
                                     color = AppleRed,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
                                 )
-                            }
-                        }
-
-                        Surface(
-                            modifier = Modifier.size(38.dp),
-                            shape = CircleShape,
-                            color = Color.White,
-                            shadowElevation = 1.dp,
-                            onClick = { if (!state.isSyncing) onRefresh() },
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                if (state.isSyncing) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(18.dp),
-                                        strokeWidth = 2.dp,
-                                        color = AppleRed,
-                                    )
-                                } else {
-                                    Icon(
-                                        imageVector = Icons.Filled.Refresh,
-                                        contentDescription = "立即同步",
-                                        tint = AppleRed,
-                                        modifier = Modifier.size(20.dp),
-                                    )
-                                }
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Filled.Refresh,
+                                    contentDescription = "立即同步",
+                                    tint = AppleRed,
+                                    modifier = Modifier.size(20.dp),
+                                )
                             }
                         }
                     }
@@ -404,7 +372,6 @@ fun CalendarScreen(
                 homeStanding = state.standingFor(detail.competitionCode, detail.homeTeamZhName, detail.homeTeamName),
                 awayStanding = state.standingFor(detail.competitionCode, detail.awayTeamZhName, detail.awayTeamName),
                 relatedPlayers = relatedPlayers,
-                onRefreshLiveDetail = onRefreshMatchLiveDetail,
                 onClickPlayer = onOpenPlayerDetail,
                 onToggleFavorite = onToggleFavoriteTeam,
                 onToggleWatchlist = { onToggleWatchlist(detail.id) },
@@ -1057,7 +1024,6 @@ private fun MatchDetailBottomSheet(
     homeStanding: StandingEntry?,
     awayStanding: StandingEntry?,
     relatedPlayers: List<StarPlayer>,
-    onRefreshLiveDetail: () -> Unit,
     onClickPlayer: (StarPlayer) -> Unit,
     onToggleFavorite: (String) -> Unit,
     onToggleWatchlist: () -> Unit,
@@ -1227,7 +1193,6 @@ private fun MatchDetailBottomSheet(
             liveDetail = liveDetail,
             isLoading = isLoadingLiveDetail,
             note = liveDetailNote,
-            onRefreshLiveDetail = onRefreshLiveDetail,
         )
 
         // Standings Comparison if available
@@ -1370,7 +1335,6 @@ private fun MatchLiveDetailSection(
     liveDetail: LiveMatchDetail?,
     isLoading: Boolean,
     note: String?,
-    onRefreshLiveDetail: () -> Unit,
 ) {
     Surface(
         color = AppleCanvas.copy(alpha = 0.85f),
@@ -1389,12 +1353,11 @@ private fun MatchLiveDetailSection(
                     color = InkPrimary,
                 )
                 Surface(
-                    onClick = onRefreshLiveDetail,
                     shape = RoundedCornerShape(999.dp),
                     color = AppleRedTint,
                 ) {
                     Text(
-                        text = if (isLoading) "同步中..." else "刷新实时详情",
+                        text = if (isLoading) "同步中..." else "● 自动零延迟同步",
                         color = AppleRed,
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
@@ -1403,14 +1366,14 @@ private fun MatchLiveDetailSection(
                 }
             }
 
-            if (isLoading) {
+            if (isLoading && liveDetail == null) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = AppleRed)
                     Text("正在拉取实时比赛过程详情...", style = MaterialTheme.typography.bodySmall, color = InkSecondary)
                 }
             }
 
-            if (!note.isNullOrBlank() && liveDetail == null) {
+            if (!note.isNullOrBlank() && (liveDetail == null || (liveDetail.events.isEmpty() && liveDetail.lineups.isEmpty() && liveDetail.statistics.isEmpty()))) {
                 Text(note, style = MaterialTheme.typography.bodySmall, color = InkSecondary)
             }
 

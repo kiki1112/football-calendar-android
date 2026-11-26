@@ -7,6 +7,7 @@ import com.footballcalendar.app.data.local.StandingEntity
 import com.footballcalendar.app.data.local.TeamDao
 import com.footballcalendar.app.data.local.TeamEntity
 import com.footballcalendar.app.data.preferences.UserPreferencesRepository
+import com.footballcalendar.app.data.remote.EspnLeagueCatalog
 import com.footballcalendar.app.data.remote.FeedApiService
 import com.footballcalendar.app.data.remote.FixtureDataSource
 import com.footballcalendar.app.model.DataSourceMode
@@ -28,6 +29,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
 import java.net.URLEncoder
+import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
@@ -46,7 +48,9 @@ class FixtureRepository(
     val starPlayersFlow: Flow<List<StarPlayer>> = _starPlayers.asStateFlow()
 
     private val liveDetailCache = linkedMapOf<String, LiveMatchDetail>()
-    private var lastLiveSweepMillis: Long = 0L
+    private var lastAfLiveSweepMillis: Long = 0L
+
+    fun getCachedLiveDetail(matchId: String): LiveMatchDetail? = liveDetailCache[matchId]
 
     fun observeAllMatches(): Flow<List<MatchItem>> =
         matchDao.observeAllMatches().map { list -> list.map { it.toDomain() } }
@@ -107,6 +111,9 @@ class FixtureRepository(
             if (payload.players.isNotEmpty()) {
                 _starPlayers.value = payload.players
             }
+            if (payload.liveDetails.isNotEmpty()) {
+                liveDetailCache.putAll(payload.liveDetails)
+            }
 
             val nowIso = DateTimeFormatter.ISO_INSTANT.format(Instant.now())
             val summaryText = if (diffResult.changes.isEmpty()) {
@@ -132,82 +139,168 @@ class FixtureRepository(
     }
 
     /**
-     * Fetches live scores worldwide in 1 API-Football request (throttled to min 30s)
-     * and updates matching fixtures inside Room.
+     * Zero-quota, near-zero-latency live score refresh using ESPN `all/scoreboard` first,
+     * supplementing with API-Football `fixtures?live=all` only when non-ESPN leagues (J2/KL1/U20AC)
+     * have active windows (throttled to >= 180s to protect the 100/day Free plan quota).
      */
-    suspend fun refreshLiveScores(force: Boolean = false): Result<Int> {
+    suspend fun refreshLiveScoresEspnFirst(): Result<Int> {
         return runCatching {
             val prefs = prefsRepo.currentPreferences()
-            val afKey = prefs.effectiveApiFootballKey()
-            require(afKey.isNotEmpty()) { "未配置 API-Football 密钥，无法拉取实时比分" }
-
-            val nowMs = System.currentTimeMillis()
-            if (!force && nowMs - lastLiveSweepMillis < 30_000L) {
-                return@runCatching 0
-            }
-            lastLiveSweepMillis = nowMs
-
-            val resp = apiService.fetchApiFootballFixtures(
-                url = "https://v3.football.api-sports.io/fixtures?live=all",
-                apiKey = afKey,
-            )
-            val liveItems = resp.response.mapNotNull { it.toMatchItem() }
-            if (liveItems.isEmpty()) return@runCatching 0
+            if (prefs.dataSourceMode == DataSourceMode.DEMO) return@runCatching 0
 
             val existing = matchDao.getAllMatchesOnce().map { it.toDomain() }.toMutableList()
-            var updatedCount = 0
-            for (live in liveItems) {
-                val idx = existing.indexOfFirst {
-                    it.apiFootballFixtureId == live.apiFootballFixtureId ||
-                        it.id == live.id ||
-                        (it.homeTeamZhName == live.homeTeamZhName && it.awayTeamZhName == live.awayTeamZhName)
+            val changedItems = mutableListOf<MatchItem>()
+
+            // 1. Free ESPN global live scoreboard (0 quota, fast real-time updates)
+            runCatching {
+                val espnResp = apiService.fetchEspnScoreboard(
+                    "https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard",
+                )
+                val espnItems = espnResp.events.mapNotNull { it.toMatchItem() }
+                for (live in espnItems) {
+                    applyLiveUpdate(live, existing, prefs.followedCompetitions, changedItems)
                 }
-                if (idx >= 0) {
-                    val cur = existing[idx]
-                    existing[idx] = cur.copy(
-                        status = live.status,
-                        homeScore = live.homeScore,
-                        awayScore = live.awayScore,
-                        elapsedMinutes = live.elapsedMinutes,
-                        apiFootballFixtureId = live.apiFootballFixtureId,
-                        lastUpdatedUtc = DateTimeFormatter.ISO_INSTANT.format(Instant.now()),
+            }
+
+            // 2. Smart quota-safe API-Football supplement ONLY if non-ESPN leagues have live/kickoff windows
+            val afOnlyCodes = setOf("J2", "KL1", "U20AC", "INT")
+            val nowInstant = Instant.now()
+            val hasActiveAfWindow = existing.any { m ->
+                m.competitionCode in afOnlyCodes && (
+                    m.status.isLive || MatchTimeFormatter.parseInstant(m.utcDate)?.let { ko ->
+                        val mins = Duration.between(ko, nowInstant).toMinutes()
+                        mins in -15..165
+                    } == true
+                )
+            }
+            val afKey = prefs.effectiveApiFootballKey()
+            val nowMs = System.currentTimeMillis()
+            if (afKey.isNotEmpty() && hasActiveAfWindow && (nowMs - lastAfLiveSweepMillis) >= 180_000L) {
+                lastAfLiveSweepMillis = nowMs
+                runCatching {
+                    val afResp = apiService.fetchApiFootballFixtures(
+                        url = "https://v3.football.api-sports.io/fixtures?live=all",
+                        apiKey = afKey,
                     )
-                    updatedCount++
-                } else if (live.competitionCode in prefs.followedCompetitions) {
-                    existing += live
-                    updatedCount++
+                    afResp.response.mapNotNull { it.toMatchItem() }.forEach { live ->
+                        applyLiveUpdate(live, existing, prefs.followedCompetitions, changedItems)
+                    }
                 }
             }
-            if (updatedCount > 0) {
-                matchDao.upsertAll(existing.map { MatchEntity.fromDomain(it) })
+
+            if (changedItems.isNotEmpty()) {
+                matchDao.upsertAll(changedItems.distinctBy { it.id }.map { MatchEntity.fromDomain(it) })
             }
-            updatedCount
+            changedItems.size
+        }
+    }
+
+    private fun applyLiveUpdate(
+        live: MatchItem,
+        existing: MutableList<MatchItem>,
+        followedCodes: Set<String>,
+        changedOut: MutableList<MatchItem>,
+    ) {
+        val idx = existing.indexOfFirst {
+            (live.espnEventId != null && it.espnEventId == live.espnEventId) ||
+                (live.apiFootballFixtureId != null && it.apiFootballFixtureId == live.apiFootballFixtureId) ||
+                it.id == live.id ||
+                (it.competitionCode == live.competitionCode &&
+                    it.homeTeamZhName == live.homeTeamZhName &&
+                    it.awayTeamZhName == live.awayTeamZhName)
+        }
+        if (idx >= 0) {
+            val cur = existing[idx]
+            val newStatus = if (live.status.isLive || live.status == MatchStatus.FINISHED) live.status else cur.status
+            val newH = live.homeScore ?: cur.homeScore
+            val newA = live.awayScore ?: cur.awayScore
+            val newElapsed = live.elapsedMinutes ?: cur.elapsedMinutes
+            val newEspnSlug = live.espnSlug ?: cur.espnSlug
+            val newEspnEventId = live.espnEventId ?: cur.espnEventId
+            val newAfId = live.apiFootballFixtureId ?: cur.apiFootballFixtureId
+            if (newStatus != cur.status || newH != cur.homeScore || newA != cur.awayScore ||
+                newElapsed != cur.elapsedMinutes || newEspnSlug != cur.espnSlug ||
+                newEspnEventId != cur.espnEventId || newAfId != cur.apiFootballFixtureId
+            ) {
+                val updated = cur.copy(
+                    status = newStatus,
+                    homeScore = newH,
+                    awayScore = newA,
+                    elapsedMinutes = newElapsed,
+                    espnSlug = newEspnSlug,
+                    espnEventId = newEspnEventId,
+                    apiFootballFixtureId = newAfId,
+                    lastUpdatedUtc = DateTimeFormatter.ISO_INSTANT.format(Instant.now()),
+                )
+                existing[idx] = updated
+                changedOut += updated
+            }
+        } else if (live.competitionCode in followedCodes && (live.status.isLive || live.status == MatchStatus.FINISHED)) {
+            existing += live
+            changedOut += live
         }
     }
 
     /**
-     * Fetches real-time events (goals, assists, cards, substitutions), lineups, and statistics
-     * for an opened match using API-Football `fixtures?id=...` (1 API call, cached 45s while live).
+     * Fetches match events, lineups & stats via ESPN `summary` FIRST (free, unlimited, fast),
+     * falling back automatically to API-Football `fixtures?id=...` if needed.
      */
     suspend fun fetchMatchLiveDetail(match: MatchItem, forceRefresh: Boolean = false): Result<LiveMatchDetail> {
         return runCatching {
             val cached = liveDetailCache[match.id]
             val nowMs = System.currentTimeMillis()
             if (!forceRefresh && cached != null) {
-                val freshWindow = if (match.status == MatchStatus.FINISHED) 24 * 60 * 60 * 1000L else 45_000L
-                if (nowMs - cached.syncedAtMillis < freshWindow) {
+                val isFinished = cached.statusShort == MatchStatus.FINISHED.name || match.status == MatchStatus.FINISHED
+                if (isFinished || (nowMs - cached.syncedAtMillis) < 8_000L) {
                     return@runCatching cached
                 }
             }
 
+            // 1. Try ESPN Summary (Free, zero quota)
+            val targetSlug = match.espnSlug ?: EspnLeagueCatalog.slugForCode(match.competitionCode)
+            var targetEventId = match.espnEventId ?: match.id.removePrefix("espn-").takeIf { match.id.startsWith("espn-") }
+            if (targetSlug != null && targetEventId == null) {
+                val utcDate = MatchTimeFormatter.parseInstant(match.utcDate)
+                    ?.atZone(ZoneOffset.UTC)
+                    ?.toLocalDate()
+                if (utcDate != null) {
+                    val ds = DateTimeFormatter.BASIC_ISO_DATE.format(utcDate)
+                    val sb = runCatching {
+                        apiService.fetchEspnScoreboard(
+                            "https://site.api.espn.com/apis/site/v2/sports/soccer/$targetSlug/scoreboard?dates=$ds",
+                        )
+                    }.getOrNull()
+                    targetEventId = sb?.events?.mapNotNull { it.toMatchItem(targetSlug) }?.firstOrNull { em ->
+                        em.homeTeamZhName == match.homeTeamZhName && em.awayTeamZhName == match.awayTeamZhName
+                    }?.espnEventId
+                }
+            }
+
+            if (targetSlug != null && targetEventId != null) {
+                val espnDetail = runCatching {
+                    val sm = apiService.fetchEspnSummary(
+                        "https://site.api.espn.com/apis/site/v2/sports/soccer/$targetSlug/summary?event=$targetEventId",
+                    )
+                    sm.toLiveDetail(match.id, targetEventId)
+                }.getOrNull()
+                if (espnDetail != null) {
+                    liveDetailCache[match.id] = espnDetail
+                    persistDetailOntoMatch(match.id, espnDetail, espnSlug = targetSlug, espnEventId = targetEventId)
+                    return@runCatching espnDetail
+                }
+            }
+
+            // 2. Fallback to API-Football (e.g. J2 / K League 1 / U20 Asian Cup)
+            if (cached != null && (nowMs - cached.syncedAtMillis) < 45_000L) {
+                return@runCatching cached
+            }
             val prefs = prefsRepo.currentPreferences()
             val afKey = prefs.effectiveApiFootballKey()
-            require(afKey.isNotEmpty()) { "未配置 API-Football 实时事件接口密钥" }
+            require(afKey.isNotEmpty()) { "该赛事暂不支持细节回放" }
 
             var targetFixtureId = match.apiFootballFixtureId
                 ?: match.id.removePrefix("af-").toIntOrNull()
 
-            // If match came from Football-Data without apiFootballFixtureId, try matching today/match date once
             if (targetFixtureId == null) {
                 val utcDateStr = MatchTimeFormatter.parseInstant(match.utcDate)
                     ?.atZone(ZoneOffset.UTC)
@@ -218,45 +311,49 @@ class FixtureRepository(
                         url = "https://v3.football.api-sports.io/fixtures?date=$utcDateStr",
                         apiKey = afKey,
                     )
-                    val matched = dayResp.response.firstOrNull { row ->
-                        val hZh = TeamLocalization.localizeTeam(row.teams.home.name)
-                        val aZh = TeamLocalization.localizeTeam(row.teams.away.name)
-                        hZh == match.homeTeamZhName && aZh == match.awayTeamZhName
-                    }
-                    targetFixtureId = matched?.fixture?.id
+                    targetFixtureId = dayResp.response.firstOrNull { row ->
+                        TeamLocalization.localizeTeam(row.teams.home.name) == match.homeTeamZhName &&
+                            TeamLocalization.localizeTeam(row.teams.away.name) == match.awayTeamZhName
+                    }?.fixture?.id
                 }
             }
 
             require(targetFixtureId != null && targetFixtureId > 0) {
-                "该场次暂无可用的实时事件编号（仅近期/进行中/已完赛赛事支持）"
+                "比赛未开赛或暂无实时事件记录"
             }
 
             val detailResp = apiService.fetchApiFootballFixtures(
                 url = "https://v3.football.api-sports.io/fixtures?id=$targetFixtureId",
                 apiKey = afKey,
             )
-            val row = detailResp.response.firstOrNull()
-                ?: error("未返回比赛过程详情")
+            val row = detailResp.response.firstOrNull() ?: error("暂无比赛过程详情")
             val detail = row.toLiveDetail(match.id)
             liveDetailCache[match.id] = detail
-
-            // Also persist updated score/elapsed back into Room MatchEntity
-            val liveMatch = row.toMatchItem()
-            val all = matchDao.getAllMatchesOnce().map { it.toDomain() }
-            val idx = all.indexOfFirst { it.id == match.id }
-            if (idx >= 0) {
-                val cur = all[idx]
-                val updated = cur.copy(
-                    status = liveMatch?.status ?: cur.status,
-                    homeScore = detail.homeScore ?: cur.homeScore,
-                    awayScore = detail.awayScore ?: cur.awayScore,
-                    elapsedMinutes = detail.elapsedMinutes ?: cur.elapsedMinutes,
-                    apiFootballFixtureId = targetFixtureId,
-                )
-                matchDao.upsertAll(listOf(MatchEntity.fromDomain(updated)))
-            }
+            persistDetailOntoMatch(match.id, detail, afFixtureId = targetFixtureId)
             detail
         }
+    }
+
+    private suspend fun persistDetailOntoMatch(
+        matchId: String,
+        detail: LiveMatchDetail,
+        espnSlug: String? = null,
+        espnEventId: String? = null,
+        afFixtureId: Int? = null,
+    ) {
+        val all = matchDao.getAllMatchesOnce().map { it.toDomain() }
+        val cur = all.firstOrNull { it.id == matchId } ?: return
+        val newStatus = MatchStatus.fromRaw(detail.statusShort).takeIf { it != MatchStatus.UNKNOWN } ?: cur.status
+        val updated = cur.copy(
+            status = newStatus,
+            homeScore = detail.homeScore ?: cur.homeScore,
+            awayScore = detail.awayScore ?: cur.awayScore,
+            elapsedMinutes = detail.elapsedMinutes ?: cur.elapsedMinutes,
+            espnSlug = espnSlug ?: cur.espnSlug,
+            espnEventId = espnEventId ?: cur.espnEventId,
+            apiFootballFixtureId = afFixtureId ?: cur.apiFootballFixtureId,
+        )
+        matchDao.upsertAll(listOf(MatchEntity.fromDomain(updated)))
     }
 
     suspend fun fetchTeamDetailOnDemand(
@@ -266,6 +363,26 @@ class FixtureRepository(
         crest: String,
     ): Result<TeamDetailInfo?> {
         return runCatching {
+            val espnSlug = EspnLeagueCatalog.slugForCode(compCode)
+            if (espnSlug != null && teamId > 0) {
+                val roster = runCatching {
+                    apiService.fetchEspnRoster(
+                        "https://site.api.espn.com/apis/site/v2/sports/soccer/$espnSlug/teams/$teamId/roster",
+                    )
+                }.getOrNull()
+                if (roster != null && roster.athletes.isNotEmpty()) {
+                    val detail = roster.toTeamDetail(
+                        teamId = teamId,
+                        compCode = compCode,
+                        teamName = teamName,
+                        shortName = teamName,
+                        crest = crest,
+                    )
+                    teamDao.upsertAll(listOf(TeamEntity.fromDomain(detail, json)))
+                    return@runCatching detail
+                }
+            }
+
             val prefs = prefsRepo.currentPreferences()
             val afKey = prefs.effectiveApiFootballKey()
             if (afKey.isBlank() || teamId <= 0) return@runCatching null

@@ -28,8 +28,8 @@ enum class MatchStatus(val zhLabel: String) {
 
 enum class DataSourceMode(val displayName: String, val description: String) {
     DEMO("演示模式（离线可用）", "内置精选赛程、积分榜与球员榜，可模拟改期"),
-    GITHUB_PAGES("GitHub Pages 订阅源（推荐）", "自动聚合全网官方赛程、积分榜、球队阵容与球员榜"),
-    FOOTBALL_DATA_API("官方实时 API 直连", "使用内置部署密钥直连官方数据源与实时赛况");
+    GITHUB_PAGES("GitHub Pages + ESPN 实时双引擎（推荐）", "后台全量聚合 + ESPN 零配额秒级自动同步实时比分与赛况"),
+    FOOTBALL_DATA_API("官方实时 API 直连（含 ESPN）", "使用内置部署密钥直连官方数据源 + ESPN 实时赛况");
 
     companion object {
         fun fromName(name: String?): DataSourceMode {
@@ -77,7 +77,11 @@ object CompetitionCatalog {
     )
 
     val defaultCodes: Set<String> = all.map { it.code }.toSet()
-    val standingsCodes: List<String> = listOf("PL", "PD", "BL1", "SA", "FL1", "CL", "ELC", "DED", "PPL", "BSA")
+    val standingsCodes: List<String> = listOf(
+        "PL", "PD", "BL1", "SA", "FL1", "CL",
+        "UEL", "UECL", "ACL", "J1", "AL", "MLS",
+        "ELC", "DED", "PPL", "BSA",
+    )
     val internationalCodes: Set<String> = setOf("WC", "EC", "UNL", "U17WC", "U20AC", "INT")
 
     fun findByCode(code: String): CompetitionMeta? =
@@ -112,6 +116,8 @@ data class MatchItem(
     val awayTeamCrest: String = "",
     val elapsedMinutes: Int? = null,
     val apiFootballFixtureId: Int? = null,
+    val espnSlug: String? = null,
+    val espnEventId: String? = null,
 ) {
     val isInternational: Boolean
         get() = competitionCode in CompetitionCatalog.internationalCodes
@@ -152,6 +158,7 @@ data class StandingEntry(
     val form: String = "",
     val zoneType: String = "NONE",
     val zoneLabel: String = "",
+    val groupName: String = "",
 )
 
 data class StarPlayer(

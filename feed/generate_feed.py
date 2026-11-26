@@ -22,12 +22,15 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from localization import (
     PLAYER_ZH_MAP,
     TEAM_ZH_MAP,
     _normalize_team_key,
+    localize_espn_group,
+    localize_espn_zone,
     localize_player,
     localize_position,
     localize_team,
@@ -40,8 +43,38 @@ DEFAULT_COMPETITIONS = [
     "WC", "EC", "UNL", "U17WC", "U20AC",
 ]
 FD_COMPETITIONS = ["PL", "PD", "BL1", "SA", "FL1", "CL", "ELC", "DED", "PPL", "BSA", "CLI", "WC", "EC"]
-STANDINGS_COMPETITIONS = ["PL", "PD", "BL1", "SA", "FL1", "CL", "ELC", "DED", "PPL", "BSA"]
+STANDINGS_COMPETITIONS = [
+    "PL", "PD", "BL1", "SA", "FL1", "CL",
+    "UEL", "UECL", "ACL", "J1", "AL", "MLS",
+    "ELC", "DED", "PPL", "BSA",
+]
 INTERNATIONAL_CODES = {"WC", "EC", "UNL", "U17WC", "U20AC", "INT"}
+
+ESPN_SLUG_BY_CODE: dict[str, str] = {
+    "PL": "eng.1",
+    "PD": "esp.1",
+    "BL1": "ger.1",
+    "SA": "ita.1",
+    "FL1": "fra.1",
+    "CL": "uefa.champions",
+    "UEL": "uefa.europa",
+    "UECL": "uefa.europa.conf",
+    "ACL": "afc.champions",
+    "J1": "jpn.1",
+    "AL": "aus.1",
+    "MLS": "usa.1",
+    "ELC": "eng.2",
+    "DED": "ned.1",
+    "PPL": "por.1",
+    "BSA": "bra.1",
+    "CLI": "conmebol.libertadores",
+    "WC": "fifa.world",
+    "EC": "uefa.euro",
+    "UNL": "uefa.nations",
+    "U17WC": "fifa.world.u17",
+}
+ESPN_CODE_BY_SLUG: dict[str, str] = {v: k for k, v in ESPN_SLUG_BY_CODE.items()}
+ESPN_STANDINGS_CODES = ["UEL", "UECL", "ACL", "J1", "AL", "MLS"]
 
 COMPETITION_META: dict[str, dict[str, str]] = {
     "PL": {"name": "Premier League", "zhName": "英超", "country": "英格兰", "color": "#E11D48"},
@@ -304,6 +337,8 @@ class NormalizedMatch:
     lastUpdatedUtc: str
     elapsedMinutes: int | None = None
     apiFootballFixtureId: int | None = None
+    espnSlug: str | None = None
+    espnEventId: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
@@ -1178,6 +1213,7 @@ def write_feed_outputs(
     competitions: list[str],
     generated_at: dt.datetime | None = None,
     teams: list[dict[str, Any]] | None = None,
+    live_details: dict[str, Any] | None = None,
 ) -> dict[str, pathlib.Path]:
     now = (generated_at or dt.datetime.now(dt.timezone.utc)).astimezone(dt.timezone.utc)
     sorted_matches = sorted(matches, key=lambda m: (m.utcDate, m.competitionCode, m.id))
@@ -1187,7 +1223,7 @@ def write_feed_outputs(
     ics_dir.mkdir(parents=True, exist_ok=True)
 
     payload = {
-        "schemaVersion": 3,
+        "schemaVersion": 4,
         "generatedAtUtc": format_utc_iso(now),
         "mode": mode,
         "competitions": [
@@ -1204,6 +1240,7 @@ def write_feed_outputs(
         "standings": standings,
         "players": players,
         "teams": teams or [],
+        "liveDetails": live_details or {},
     }
 
     fixtures_path = output_dir / "fixtures.json"
@@ -1312,6 +1349,402 @@ def _fetch_af_team_detail(api_key: str, team_id: int, comp_code: str, fallback_n
     }
 
 
+def _map_espn_status(status_obj: dict[str, Any]) -> tuple[str, int | None]:
+    stype = status_obj.get("type") or {}
+    state = (stype.get("state") or "pre").lower()
+    name = (stype.get("name") or "").upper()
+    clock_raw = str(status_obj.get("displayClock") or "").strip()
+    elapsed: int | None = None
+    if clock_raw:
+        digits = clock_raw.split("'")[0].replace("+", "").strip()
+        if digits.isdigit():
+            elapsed = int(digits)
+    if "HALFTIME" in name:
+        return ("PAUSED", elapsed)
+    if "POSTPONED" in name:
+        return ("POSTPONED", None)
+    if "CANCELED" in name or "CANCELLED" in name:
+        return ("CANCELLED", None)
+    if "SUSPENDED" in name:
+        return ("SUSPENDED", elapsed)
+    if state == "in":
+        return ("LIVE", elapsed)
+    if state == "post":
+        return ("FINISHED", elapsed)
+    return ("TIMED", None)
+
+
+def _merge_espn_match(
+    nm: NormalizedMatch,
+    collected: dict[str, NormalizedMatch],
+    espn_index: dict[tuple[str, str], NormalizedMatch],
+) -> None:
+    pair = (_normalize_team_key(nm.homeTeamName), _normalize_team_key(nm.awayTeamName))
+    espn_index[pair] = nm
+    # Check if AF or FD already has this match
+    matched_id = None
+    for mid, cur in collected.items():
+        if cur.competitionCode == nm.competitionCode and (
+            _normalize_team_key(cur.homeTeamName),
+            _normalize_team_key(cur.awayTeamName),
+        ) == pair:
+            matched_id = mid
+            break
+    if matched_id is None:
+        collected[nm.id] = nm
+
+
+def normalize_espn_event(ev: dict[str, Any], fallback_slug: str = "") -> NormalizedMatch | None:
+    eid = str(ev.get("id") or "").strip()
+    if not eid:
+        return None
+    slug = (fallback_slug or "").strip()
+    if not slug:
+        slug = ((ev.get("league") or {}).get("slug") or "").strip()
+    if not slug:
+        # Try deriving from league links if present inside event
+        for lnk in ev.get("links") or []:
+            href = lnk.get("href") or ""
+            for s in ESPN_CODE_BY_SLUG:
+                if f"/{s}/" in href:
+                    slug = s
+                    break
+            if slug:
+                break
+    code = ESPN_CODE_BY_SLUG.get(slug)
+    if not code:
+        return None
+    meta = COMPETITION_META.get(code, {})
+    comps = ev.get("competitions") or []
+    comp0 = comps[0] if comps else {}
+    competitors = comp0.get("competitors") or []
+    home_c = next((c for c in competitors if c.get("homeAway") == "home"), competitors[0] if len(competitors) > 0 else {})
+    away_c = next((c for c in competitors if c.get("homeAway") == "away"), competitors[1] if len(competitors) > 1 else {})
+    home_team = home_c.get("team") or {}
+    away_team = away_c.get("team") or {}
+    home_name = home_team.get("displayName") or home_team.get("name") or "TBD"
+    away_name = away_team.get("displayName") or away_team.get("name") or "TBD"
+    date_iso = ev.get("date") or ""
+    if not date_iso:
+        return None
+    status_str, elapsed = _map_espn_status(comp0.get("status") or ev.get("status") or {})
+    show_score = status_str in {"LIVE", "PAUSED", "FINISHED"}
+    h_score = int(home_c["score"]) if show_score and str(home_c.get("score", "")).isdigit() else None
+    a_score = int(away_c["score"]) if show_score and str(away_c.get("score", "")).isdigit() else None
+    venue = ((comp0.get("venue") or {}).get("fullName")) or ""
+    h_crest = home_team.get("logo") or ((home_team.get("logos") or [{}])[0].get("href") or "")
+    a_crest = away_team.get("logo") or ((away_team.get("logos") or [{}])[0].get("href") or "")
+    return NormalizedMatch(
+        id=f"espn-{eid}",
+        competitionCode=code,
+        competitionName=meta.get("name") or code,
+        competitionZhName=meta.get("zhName") or code,
+        matchday=None,
+        stage="INTERNATIONAL" if code in INTERNATIONAL_CODES else "REGULAR_SEASON",
+        utcDate=format_utc_iso(parse_utc_iso(date_iso)),
+        status=status_str,
+        homeTeamId=int(home_team.get("id") or 0),
+        homeTeamName=home_name,
+        homeTeamShortName=home_team.get("shortDisplayName") or home_name,
+        homeTeamZhName=localize_team(home_name, home_team.get("shortDisplayName")),
+        homeTeamCrest=resolve_team_logo(home_name, h_crest),
+        awayTeamId=int(away_team.get("id") or 0),
+        awayTeamName=away_name,
+        awayTeamShortName=away_team.get("shortDisplayName") or away_name,
+        awayTeamZhName=localize_team(away_name, away_team.get("shortDisplayName")),
+        awayTeamCrest=resolve_team_logo(away_name, a_crest),
+        homeScore=h_score,
+        awayScore=a_score,
+        venue=venue,
+        lastUpdatedUtc=format_utc_iso(dt.datetime.now(dt.timezone.utc)),
+        elapsedMinutes=elapsed,
+        espnSlug=slug,
+        espnEventId=eid,
+    )
+
+
+def fetch_espn_standings(slug: str, comp_code: str) -> list[dict[str, Any]]:
+    url = f"https://site.api.espn.com/apis/v2/sports/soccer/{slug}/standings"
+    payload = fetch_json(url, {})
+    children = payload.get("children") or [payload]
+    rows: list[dict[str, Any]] = []
+    for child in children:
+        grp_name = localize_espn_group(child.get("name"))
+        entries = (child.get("standings") or {}).get("entries") or []
+        total_rows = len(entries)
+        for idx, entry in enumerate(entries, start=1):
+            team = entry.get("team") or {}
+            t_name = team.get("displayName") or team.get("name") or "Unknown"
+            t_short = team.get("shortDisplayName") or t_name
+            logos = team.get("logos") or []
+            crest = logos[0].get("href", "") if logos else ""
+            stats = {s.get("name"): s for s in (entry.get("stats") or []) if s.get("name")}
+            def _si(key: str, default: int = 0) -> int:
+                s_obj = stats.get(key) or {}
+                v = s_obj.get("value")
+                if v is not None:
+                    return int(round(float(v)))
+                dv = str(s_obj.get("displayValue") or "").replace("+", "").strip()
+                return int(dv) if dv.lstrip("-").isdigit() else default
+            rank = _si("rank", idx)
+            note_desc = (entry.get("note") or {}).get("description")
+            z_type, z_label = localize_espn_zone(note_desc, comp_code, rank, total_rows)
+            if z_type == "NONE":
+                z_type, z_label = determine_standing_zone(comp_code, rank, total_rows)
+            rows.append(
+                {
+                    "competitionCode": comp_code,
+                    "groupName": grp_name,
+                    "rank": rank,
+                    "teamName": t_name,
+                    "teamZhName": localize_team(t_name, t_short),
+                    "teamCrest": resolve_team_logo(t_name, crest),
+                    "played": _si("gamesPlayed"),
+                    "won": _si("wins"),
+                    "draw": _si("ties"),
+                    "lost": _si("losses"),
+                    "goalDifference": _si("pointDifferential"),
+                    "points": _si("points"),
+                    "form": "",
+                    "zoneType": z_type,
+                    "zoneLabel": z_label,
+                }
+            )
+    return rows
+
+
+def fetch_espn_teams_and_rosters(
+    slug: str, comp_code: str, existing_by_key: dict[str, dict[str, Any]]
+) -> list[dict[str, Any]]:
+    payload = fetch_json(f"https://site.api.espn.com/apis/site/v2/sports/soccer/{slug}/teams", {})
+    raw_teams = (((payload.get("sports") or [{}])[0].get("leagues") or [{}])[0].get("teams") or [])
+    results: list[dict[str, Any]] = []
+    targets: list[tuple[str, str, str, str]] = []
+    for item in raw_teams:
+        t = item.get("team") or {}
+        tid = str(t.get("id") or "")
+        t_name = t.get("displayName") or t.get("name") or ""
+        t_short = t.get("shortDisplayName") or t_name
+        logos = t.get("logos") or []
+        crest = logos[0].get("href", "") if logos else ""
+        if not tid or not t_name:
+            continue
+        tk = _normalize_team_key(t_name)
+        cached = existing_by_key.get(tk)
+        if cached and cached.get("squad"):
+            continue
+        targets.append((tid, t_name, t_short, crest))
+
+    def _pull_roster(args: tuple[str, str, str, str]) -> dict[str, Any] | None:
+        tid, t_name, t_short, crest = args
+        squad_rows: list[dict[str, Any]] = []
+        try:
+            r_data = fetch_json(
+                f"https://site.api.espn.com/apis/site/v2/sports/soccer/{slug}/teams/{tid}/roster",
+                {},
+                timeout_seconds=12,
+            )
+            for ath in r_data.get("athletes") or []:
+                p_name = ath.get("displayName") or ath.get("fullName") or ""
+                if not p_name:
+                    continue
+                p_zh, is_tr = localize_player(p_name)
+                pos_obj = ath.get("position") or {}
+                pos_en = pos_obj.get("displayName") or pos_obj.get("name") or ""
+                age = int(ath.get("age") or 0)
+                jersey_str = str(ath.get("jersey") or "")
+                squad_rows.append(
+                    {
+                        "id": f"espnp-{ath.get('id') or abs(hash(p_name))}",
+                        "name": p_name,
+                        "zhName": p_zh,
+                        "isTransliterated": is_tr,
+                        "position": pos_en,
+                        "positionZh": localize_position(pos_en),
+                        "nationality": ((ath.get("citizenship") or "")),
+                        "birthYear": max(1975, dt.datetime.now().year - age) if age > 10 else 0,
+                        "shirtNumber": int(jersey_str) if jersey_str.isdigit() else 0,
+                        "portraitUrl": ((ath.get("headshot") or {}).get("href") or ""),
+                    }
+                )
+        except Exception:  # noqa: BLE001
+            return None
+        return {
+            "teamId": int(tid) if tid.isdigit() else 0,
+            "competitionCode": comp_code,
+            "name": t_name,
+            "shortName": t_short,
+            "zhName": localize_team(t_name, t_short),
+            "crest": resolve_team_logo(t_name, crest),
+            "venue": "",
+            "founded": 0,
+            "clubColors": "",
+            "coachName": "",
+            "coachZhName": "",
+            "coachNationality": "",
+            "squad": squad_rows,
+        }
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        for res in pool.map(_pull_roster, targets[:36]):
+            if res:
+                results.append(res)
+    return results
+
+
+def fetch_espn_summary_detail(match_id: str, slug: str, event_id: str) -> dict[str, Any] | None:
+    try:
+        sm = fetch_json(
+            f"https://site.api.espn.com/apis/site/v2/sports/soccer/{slug}/summary?event={event_id}",
+            {},
+            timeout_seconds=12,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    comp = ((sm.get("header") or {}).get("competitions") or [{}])[0]
+    competitors = comp.get("competitors") or []
+    home_c = next((c for c in competitors if c.get("homeAway") == "home"), competitors[0] if len(competitors) > 0 else {})
+    away_c = next((c for c in competitors if c.get("homeAway") == "away"), competitors[1] if len(competitors) > 1 else {})
+    home_id = str((home_c.get("team") or {}).get("id") or "")
+    home_name = (home_c.get("team") or {}).get("displayName") or ""
+
+    # Parse keyEvents for goals, cards & substitutions cleanly
+    events: list[dict[str, Any]] = []
+    for ke in sm.get("keyEvents") or []:
+        t_text = ((ke.get("type") or {}).get("text") or "").strip()
+        low_t = t_text.lower()
+        if not any(k in low_t for k in ("goal", "card", "substitution", "penalty")):
+            continue
+        clock_str = ((ke.get("clock") or {}).get("displayValue") or "").strip()
+        mins = 0
+        extra: int | None = None
+        if "'" in clock_str:
+            parts_c = clock_str.replace("'", "").split("+")
+            if parts_c[0].strip().isdigit():
+                mins = int(parts_c[0].strip())
+            if len(parts_c) > 1 and parts_c[1].strip().isdigit():
+                extra = int(parts_c[1].strip())
+        team_obj = ke.get("team") or {}
+        t_id = str(team_obj.get("id") or "")
+        t_name = team_obj.get("displayName") or ""
+        parts = ke.get("participants") or []
+        p_name = ((parts[0].get("athlete") or {}).get("displayName") or "") if len(parts) > 0 else ""
+        a_name = ((parts[1].get("athlete") or {}).get("displayName") or "") if len(parts) > 1 else ""
+        if "substitution" in low_t:
+            ev_type = "subst"
+            ev_detail = "换人调整"
+        elif "red" in low_t:
+            ev_type = "Card"
+            ev_detail = "红牌"
+        elif "yellow" in low_t:
+            ev_type = "Card"
+            ev_detail = "黄牌"
+        else:
+            ev_type = "Goal"
+            ev_detail = "点球" if "penalty" in low_t else ("乌龙球" if "own" in low_t else "进球")
+        if p_name:
+            events.append(
+                {
+                    "elapsed": mins,
+                    "extra": extra,
+                    "teamName": t_name,
+                    "teamZhName": localize_team(t_name),
+                    "isHomeTeam": (home_id and t_id == home_id) or (t_name == home_name),
+                    "playerName": p_name,
+                    "playerZhName": localize_player(p_name)[0],
+                    "assistName": a_name or None,
+                    "assistZhName": localize_player(a_name)[0] if a_name else None,
+                    "type": ev_type,
+                    "detail": ev_detail,
+                }
+            )
+
+    lineups: list[dict[str, Any]] = []
+    for r in sm.get("rosters") or []:
+        t_name = (r.get("team") or {}).get("displayName") or ""
+        roster_list = r.get("roster") or []
+        starters = []
+        subs = []
+        for item in roster_list:
+            pn = ((item.get("athlete") or {}).get("displayName") or "").strip()
+            if not pn:
+                continue
+            j = str(item.get("jersey") or "")
+            pos = ((item.get("position") or {}).get("abbreviation") or "")
+            slot = {
+                "name": pn,
+                "zhName": localize_player(pn)[0],
+                "number": int(j) if j.isdigit() else 0,
+                "pos": pos,
+            }
+            if item.get("starter"):
+                starters.append(slot)
+            else:
+                subs.append(slot)
+        lineups.append(
+            {
+                "teamName": t_name,
+                "teamZhName": localize_team(t_name),
+                "formation": r.get("formation") or "",
+                "coachName": "",
+                "coachZhName": "",
+                "startXI": starters,
+                "substitutes": subs,
+            }
+        )
+
+    box_teams = (sm.get("boxscore") or {}).get("teams") or []
+    stats_pairs: list[dict[str, str]] = []
+    if len(box_teams) >= 2:
+        hm = {s.get("name"): str(s.get("displayValue") or "") for s in (box_teams[0].get("statistics") or [])}
+        am = {s.get("name"): str(s.get("displayValue") or "") for s in (box_teams[1].get("statistics") or [])}
+        if box_teams[0].get("team", {}).get("displayName") != home_name and box_teams[1].get("team", {}).get("displayName") == home_name:
+            hm, am = am, hm
+        for raw_k, zh_label in (
+            ("possessionPct", "控球率"),
+            ("totalShots", "射门次数"),
+            ("shotsOnTarget", "射正次数"),
+            ("wonCorners", "角球"),
+            ("passPct", "传球成功率"),
+            ("foulsCommitted", "犯规"),
+            ("yellowCards", "黄牌"),
+            ("offsides", "越位"),
+        ):
+            hv, av = hm.get(raw_k), am.get(raw_k)
+            if hv is not None and av is not None:
+                if raw_k == "possessionPct":
+                    hv, av = f"{hv}%", f"{av}%"
+                elif raw_k == "passPct":
+                    try:
+                        if float(hv) <= 1.0:
+                            hv = f"{round(float(hv) * 100)}%"
+                        else:
+                            hv = f"{hv}%"
+                        if float(av) <= 1.0:
+                            av = f"{round(float(av) * 100)}%"
+                        else:
+                            av = f"{av}%"
+                    except ValueError:
+                        pass
+                stats_pairs.append({"labelZh": zh_label, "homeValue": hv, "awayValue": av})
+
+    status_str, elapsed = _map_espn_status(comp.get("status") or {})
+    h_sc = int(home_c["score"]) if str(home_c.get("score", "")).isdigit() else None
+    a_sc = int(away_c["score"]) if str(away_c.get("score", "")).isdigit() else None
+    return {
+        "matchId": match_id,
+        "fixtureId": 0,
+        "espnEventId": event_id,
+        "elapsedMinutes": elapsed,
+        "statusShort": status_str,
+        "homeScore": h_sc,
+        "awayScore": a_sc,
+        "events": events,
+        "lineups": lineups,
+        "stats": stats_pairs,
+    }
+
+
 def collect_data(
     api_key: str | None,
     competitions: list[str],
@@ -1320,10 +1753,13 @@ def collect_data(
     rate_limit_sleep: float = 6.2,
     api_football_key: str | None = None,
     existing_feed_url: str | None = None,
-) -> tuple[list[NormalizedMatch], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], str]:
+    enable_espn: bool = True,
+) -> tuple[list[NormalizedMatch], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], str]:
     now = dt.datetime.now(dt.timezone.utc)
-    if not api_key and not api_football_key:
-        return generate_demo_matches(now), generate_demo_standings(), [], enrich_players(), "demo_fallback"
+    if not api_key and not api_football_key and not enable_espn:
+        return generate_demo_matches(now), generate_demo_standings(), [], enrich_players(), {}, "demo_fallback"
+    if not api_key and not api_football_key and rate_limit_sleep == 0:
+        return generate_demo_matches(now), generate_demo_standings(), [], enrich_players(), {}, "demo_fallback"
 
     existing = _load_existing_feed(existing_feed_url)
     collected: dict[str, NormalizedMatch] = {}
@@ -1338,11 +1774,11 @@ def collect_data(
         if t_key:
             teams_by_key[t_key] = td
 
-    # Carry forward recent AF historical/upcoming fixtures within [-10d, +21d]
+    # Carry forward recent AF & ESPN fixtures within [-10d, +21d]
     cutoff_old = (now - dt.timedelta(days=10)).isoformat()
     for em in existing.get("matches") or []:
         eid = str(em.get("id") or "")
-        if eid.startswith("af-") and str(em.get("utcDate") or "") >= cutoff_old:
+        if (eid.startswith("af-") or eid.startswith("espn-")) and str(em.get("utcDate") or "") >= cutoff_old:
             if em.get("competitionCode") in competitions:
                 collected[eid] = NormalizedMatch(
                     id=eid,
@@ -1369,6 +1805,8 @@ def collect_data(
                     lastUpdatedUtc=em.get("lastUpdatedUtc", ""),
                     elapsedMinutes=em.get("elapsedMinutes"),
                     apiFootballFixtureId=em.get("apiFootballFixtureId"),
+                    espnSlug=em.get("espnSlug"),
+                    espnEventId=em.get("espnEventId"),
                 )
 
     # 1. Fetch Football-Data.org (matches batch, full standings, full teams+squads, scorers)
@@ -1470,9 +1908,107 @@ def collect_data(
                 teams_by_key[t_key] = td
                 fetched_count += 1
 
+    # 3. Fetch ESPN (schedules across UEL/UECL/ACL/J1/AL/MLS/WC/EC/UNL/U17WC + 2026 Standings + Rosters + Live Details)
+    live_details: dict[str, Any] = {}
+    if enable_espn:
+        espn_events_index: dict[tuple[str, str], NormalizedMatch] = {}
+        try:
+            # Multi-day sweep via `all/scoreboard?dates=YYYYMMDD` + league scoreboards
+            for delta in range(-days_back, min(days_ahead, 10) + 1):
+                ds = (now + dt.timedelta(days=delta)).strftime("%Y%m%d")
+                try:
+                    sb = fetch_json(
+                        f"https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard?dates={ds}",
+                        {},
+                        timeout_seconds=15,
+                    )
+                    for ev in sb.get("events") or []:
+                        ev_slug = ((ev.get("league") or {}).get("slug") or "").strip()
+                        nm = normalize_espn_event(ev, ev_slug)
+                        if nm and nm.competitionCode in competitions:
+                            _merge_espn_match(nm, collected, espn_events_index)
+                except Exception:  # noqa: BLE001
+                    pass
+
+            # Current round per non-FD / key ESPN league slug
+            for code in competitions:
+                slug = ESPN_SLUG_BY_CODE.get(code)
+                if not slug:
+                    continue
+                if code in fd_codes and code not in {"PL", "PD", "BL1", "SA", "FL1", "CL", "ELC", "DED", "PPL", "BSA"}:
+                    continue
+                try:
+                    sb = fetch_json(
+                        f"https://site.api.espn.com/apis/site/v2/sports/soccer/{slug}/scoreboard",
+                        {},
+                        timeout_seconds=15,
+                    )
+                    for ev in sb.get("events") or []:
+                        nm = normalize_espn_event(ev, slug)
+                        if nm and nm.competitionCode in competitions:
+                            _merge_espn_match(nm, collected, espn_events_index)
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"ESPN {slug} scoreboard: {exc}")
+
+            # Attach espnSlug & espnEventId onto existing FD/AF matches + sync fresher score
+            for mid, m in list(collected.items()):
+                pair = (_normalize_team_key(m.homeTeamName), _normalize_team_key(m.awayTeamName))
+                em = espn_events_index.get(pair)
+                if em:
+                    collected[mid] = dataclasses.replace(
+                        m,
+                        espnSlug=em.espnSlug or m.espnSlug,
+                        espnEventId=em.espnEventId or m.espnEventId,
+                        elapsedMinutes=em.elapsedMinutes if em.elapsedMinutes is not None else m.elapsedMinutes,
+                        homeScore=em.homeScore if em.status in {"LIVE", "PAUSED", "FINISHED"} and em.homeScore is not None else m.homeScore,
+                        awayScore=em.awayScore if em.status in {"LIVE", "PAUSED", "FINISHED"} and em.awayScore is not None else m.awayScore,
+                        status=em.status if em.status in {"LIVE", "PAUSED", "FINISHED"} else m.status,
+                    )
+
+            # ESPN 2026 Standings for non-FD leagues (UEL, UECL, ACL, J1, AL, MLS)
+            existing_st_codes = {row["competitionCode"] for row in standings}
+            for code in ESPN_STANDINGS_CODES:
+                slug = ESPN_SLUG_BY_CODE.get(code)
+                if slug and code in competitions and code not in existing_st_codes:
+                    try:
+                        standings.extend(fetch_espn_standings(slug, code))
+                    except Exception as exc:  # noqa: BLE001
+                        errors.append(f"ESPN {slug} standings: {exc}")
+
+            # ESPN Teams & Rosters for non-FD standings leagues
+            for code in ESPN_STANDINGS_CODES:
+                slug = ESPN_SLUG_BY_CODE.get(code)
+                if slug and code in competitions:
+                    try:
+                        for td in fetch_espn_teams_and_rosters(slug, code, teams_by_key):
+                            tk = _normalize_team_key(td["name"])
+                            if tk:
+                                teams_by_key[tk] = td
+                    except Exception as exc:  # noqa: BLE001
+                        errors.append(f"ESPN {slug} teams: {exc}")
+
+            # Pre-cache recent finished & live match details from ESPN summary for 0ms open
+            recent_targets = [
+                m for m in collected.values()
+                if m.espnSlug and m.espnEventId and m.status in {"LIVE", "PAUSED", "FINISHED"}
+            ][:40]
+            if recent_targets:
+                with ThreadPoolExecutor(max_workers=6) as pool:
+                    futures = [
+                        pool.submit(fetch_espn_summary_detail, m.id, m.espnSlug, m.espnEventId)
+                        for m in recent_targets
+                        if m.espnSlug and m.espnEventId
+                    ]
+                    for fut in futures:
+                        det = fut.result()
+                        if det:
+                            live_details[det["matchId"]] = det
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"ESPN integration: {exc}")
+
     if not collected:
         print(f"[warn] No live matches fetched ({errors}); falling back to demo feed.", file=sys.stderr)
-        return generate_demo_matches(now), generate_demo_standings(), [], enrich_players(), "demo_fallback"
+        return generate_demo_matches(now), generate_demo_standings(), [], enrich_players(), {}, "demo_fallback"
 
     if not standings:
         standings = generate_demo_standings()
@@ -1483,6 +2019,7 @@ def collect_data(
         standings,
         list(teams_by_key.values()),
         enrich_players(scorers_list),
+        live_details,
         "live_api",
     )
 
@@ -1499,13 +2036,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--days-ahead", type=int, default=21)
     parser.add_argument("--sleep", type=float, default=6.2)
     parser.add_argument("--existing-feed-url", default="", help="Previous fixtures.json URL to carry over AF history & team caches.")
+    parser.add_argument("--no-espn", action="store_true", help="Disable live ESPN HTTP fetches (e.g. offline test mode).")
     args = parser.parse_args(argv)
 
     competitions = [c.strip().upper() for c in args.competitions.split(",") if c.strip()]
     api_key = os.environ.get("FOOTBALL_DATA_API_KEY", "").strip() or None
     af_key = os.environ.get("API_FOOTBALL_KEY", "").strip() or None
 
-    matches, standings, teams, players, mode = collect_data(
+    matches, standings, teams, players, live_details, mode = collect_data(
         api_key=api_key,
         competitions=competitions,
         days_back=args.days_back,
@@ -1513,6 +2051,7 @@ def main(argv: list[str] | None = None) -> int:
         rate_limit_sleep=args.sleep,
         api_football_key=af_key,
         existing_feed_url=args.existing_feed_url.strip() or None,
+        enable_espn=not args.no_espn,
     )
     outputs = write_feed_outputs(
         output_dir=pathlib.Path(args.output_dir),
@@ -1522,10 +2061,11 @@ def main(argv: list[str] | None = None) -> int:
         mode=mode,
         competitions=competitions,
         teams=teams,
+        live_details=live_details,
     )
     print(
         f"Generated {len(matches)} matches, {len(standings)} standing rows, "
-        f"{len(teams)} teams, {len(players)} ranked players in mode={mode}: {outputs['fixtures_json']}"
+        f"{len(teams)} teams, {len(players)} ranked players, {len(live_details)} pre-cached match details in mode={mode}: {outputs['fixtures_json']}"
     )
     return 0
 

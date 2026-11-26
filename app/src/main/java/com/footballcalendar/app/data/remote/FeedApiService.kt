@@ -62,14 +62,39 @@ interface FeedApiService {
     ): ApiFootballCoachesResponse
 
     @GET
+    suspend fun fetchEspnScoreboard(
+        @Url url: String,
+    ): EspnScoreboardResponse
+
+    @GET
+    suspend fun fetchEspnSummary(
+        @Url url: String,
+    ): EspnSummaryResponse
+
+    @GET
+    suspend fun fetchEspnStandings(
+        @Url url: String,
+    ): EspnStandingsResponse
+
+    @GET
+    suspend fun fetchEspnTeams(
+        @Url url: String,
+    ): EspnTeamsResponse
+
+    @GET
+    suspend fun fetchEspnRoster(
+        @Url url: String,
+    ): EspnTeamRosterResponse
+
+    @GET
     suspend fun fetchWikipediaSummary(
         @Url url: String,
-        @Header("User-Agent") userAgent: String = "FootballCalendarApp/2.1 (https://github.com/kiki1112/football-calendar-android)",
+        @Header("User-Agent") userAgent: String = "FootballCalendarApp/2.2 (https://github.com/kiki1112/football-calendar-android)",
     ): WikipediaSummaryResponse
 
     @GET
     suspend fun fetchWikipediaLanglinks(
         @Url url: String,
-        @Header("User-Agent") userAgent: String = "FootballCalendarApp/2.1 (https://github.com/kiki1112/football-calendar-android)",
+        @Header("User-Agent") userAgent: String = "FootballCalendarApp/2.2 (https://github.com/kiki1112/football-calendar-android)",
     ): WikipediaLanglinksApiResponse
 }

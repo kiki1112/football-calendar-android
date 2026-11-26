@@ -206,16 +206,37 @@ fun StandingsScreen(
                             )
                         }
                     } else {
-                        rows.forEachIndexed { idx, entry ->
-                            val isFav = entry.teamZhName in state.prefs.favoriteTeams || entry.teamName in state.prefs.favoriteTeams
-                            StandingRowItem(
-                                entry = entry,
-                                isFavorite = isFav,
-                                showFormColumn = showFormColumn,
-                                onClick = { onClickTeam(entry) },
-                            )
-                            if (idx < rows.lastIndex) {
-                                HorizontalDivider(color = AppleCanvas)
+                        val groupedRows = if (rows.any { it.groupName.isNotBlank() }) {
+                            rows.groupBy { it.groupName.ifBlank { "总榜" } }
+                        } else {
+                            linkedMapOf("" to rows)
+                        }
+                        groupedRows.entries.forEachIndexed { groupIdx, (groupTitle, groupEntries) ->
+                            if (groupTitle.isNotBlank() && groupedRows.size > 1) {
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = Color(0xFFF3F4F6),
+                                ) {
+                                    Text(
+                                        text = groupTitle,
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = AppleRed,
+                                    )
+                                }
+                            }
+                            groupEntries.forEachIndexed { idx, entry ->
+                                val isFav = entry.teamZhName in state.prefs.favoriteTeams || entry.teamName in state.prefs.favoriteTeams
+                                StandingRowItem(
+                                    entry = entry,
+                                    isFavorite = isFav,
+                                    showFormColumn = showFormColumn,
+                                    onClick = { onClickTeam(entry) },
+                                )
+                                if (idx < groupEntries.lastIndex || groupIdx < groupedRows.size - 1) {
+                                    HorizontalDivider(color = AppleCanvas)
+                                }
                             }
                         }
                     }

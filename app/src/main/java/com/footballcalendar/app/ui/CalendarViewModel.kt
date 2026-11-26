@@ -28,15 +28,19 @@ import com.footballcalendar.app.util.TeamAssetCatalog
 import com.footballcalendar.app.util.TeamLocalization
 import com.footballcalendar.app.widget.NextMatchWidgetProvider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
@@ -65,7 +69,6 @@ data class CalendarUiState(
     val isSearchingPlayer: Boolean = false,
     val prefs: UserPreferences = UserPreferences(),
     val isSyncing: Boolean = false,
-    val isRefreshingLive: Boolean = false,
     val recentChanges: List<ScheduleChange> = emptyList(),
     val bannerMessage: String? = null,
     val selectedMatchDetail: MatchItem? = null,
@@ -91,7 +94,6 @@ private data class UiInteractionState(
     val isLoadingTeamDetail: Boolean = false,
     val isSearchingPlayer: Boolean = false,
     val isSyncing: Boolean = false,
-    val isRefreshingLive: Boolean = false,
     val recentChanges: List<ScheduleChange> = emptyList(),
     val bannerMessage: String? = null,
     val selectedMatchDetail: MatchItem? = null,
@@ -109,6 +111,8 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
     private val notificationHelper = container.notificationHelper
 
     private val uiInteraction = MutableStateFlow(UiInteractionState())
+    private var liveTickerJob: Job? = null
+    private var detailPollingJob: Job? = null
 
     private val coreDataFlow = combine(
         fixtureRepo.observeAllMatches(),
@@ -252,7 +256,6 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
             isSearchingPlayer = ui.isSearchingPlayer,
             prefs = prefs,
             isSyncing = ui.isSyncing,
-            isRefreshingLive = ui.isRefreshingLive,
             recentChanges = ui.recentChanges,
             bannerMessage = ui.bannerMessage,
             selectedMatchDetail = latestSelectedMatch,
@@ -305,55 +308,97 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun openMatchDetail(match: MatchItem) {
+        detailPollingJob?.cancel()
+        detailPollingJob = null
+        val cached = fixtureRepo.getCachedLiveDetail(match.id)
+        val shouldSync = shouldAutoSyncDetail(match)
         uiInteraction.update {
             it.copy(
                 selectedMatchDetail = match,
-                selectedMatchLiveDetail = null,
-                isLoadingMatchDetail = false,
-                matchDetailNote = null,
+                selectedMatchLiveDetail = cached,
+                isLoadingMatchDetail = cached == null && shouldSync,
+                matchDetailNote = if (cached == null && !shouldSync) {
+                    "已接入 ESPN 与 API-Football 零延迟引擎 · 开赛前约 45 分钟自动同步首发阵容与实时事件"
+                } else {
+                    null
+                },
             )
         }
-        // Auto-fetch live events/lineups/stats if match is live, finished, or linked to API-Football
-        if (match.status.isLive || match.status == MatchStatus.FINISHED || match.apiFootballFixtureId != null) {
-            loadMatchLiveDetail(match, force = false)
+        if (shouldSync) {
+            startDetailStream(match)
         }
     }
 
-    fun refreshSelectedMatchLiveDetail() {
-        val match = uiState.value.selectedMatchDetail ?: return
-        loadMatchLiveDetail(match, force = true)
+    private fun shouldAutoSyncDetail(match: MatchItem): Boolean {
+        if (match.status.isLive || match.status == MatchStatus.FINISHED ||
+            match.espnEventId != null || match.apiFootballFixtureId != null
+        ) {
+            return true
+        }
+        val ko = MatchTimeFormatter.parseInstant(match.utcDate) ?: return false
+        val mins = Duration.between(ko, Instant.now()).toMinutes()
+        return mins in -75..210
     }
 
-    private fun loadMatchLiveDetail(match: MatchItem, force: Boolean) {
-        viewModelScope.launch {
-            uiInteraction.update { it.copy(isLoadingMatchDetail = true, matchDetailNote = null) }
-            val result = withContext(Dispatchers.IO) {
-                fixtureRepo.fetchMatchLiveDetail(match, forceRefresh = force)
+    private fun startDetailStream(initialMatch: MatchItem) {
+        detailPollingJob?.cancel()
+        detailPollingJob = viewModelScope.launch {
+            fetchAndApplyMatchDetail(initialMatch, force = false)
+            while (isActive) {
+                val currentMatch = uiState.value.selectedMatchDetail ?: break
+                val currentDetail = uiInteraction.value.selectedMatchLiveDetail
+                val hasCompleteFinal = currentMatch.status == MatchStatus.FINISHED &&
+                    currentDetail != null &&
+                    (currentDetail.events.isNotEmpty() || currentDetail.lineups.isNotEmpty() || currentDetail.statistics.isNotEmpty())
+                if (hasCompleteFinal) break
+
+                val ko = MatchTimeFormatter.parseInstant(currentMatch.utcDate)
+                val inLiveOrLineupWindow = currentMatch.status.isLive ||
+                    (ko != null && Duration.between(ko, Instant.now()).toMinutes() in -60..195)
+                if (!inLiveOrLineupWindow) break
+
+                delay(10_000L)
+                val targetMatch = uiState.value.selectedMatchDetail ?: break
+                fetchAndApplyMatchDetail(targetMatch, force = true)
             }
-            result.onSuccess { detail ->
-                uiInteraction.update {
-                    it.copy(
-                        selectedMatchLiveDetail = detail,
-                        isLoadingMatchDetail = false,
-                        matchDetailNote = if (detail.events.isEmpty() && detail.lineups.isEmpty()) {
-                            "已实时连接：当前暂无进球/事件记录（赛前约 45 分钟公布首发）"
-                        } else {
-                            null
-                        },
-                    )
-                }
-            }.onFailure { err ->
-                uiInteraction.update {
-                    it.copy(
-                        isLoadingMatchDetail = false,
-                        matchDetailNote = err.message ?: "暂无实时赛况详情",
-                    )
-                }
+        }
+    }
+
+    private suspend fun fetchAndApplyMatchDetail(match: MatchItem, force: Boolean) {
+        val result = withContext(Dispatchers.IO) {
+            fixtureRepo.fetchMatchLiveDetail(match, forceRefresh = force)
+        }
+        result.onSuccess { detail ->
+            uiInteraction.update {
+                if (it.selectedMatchDetail?.id != match.id) return@update it
+                it.copy(
+                    selectedMatchLiveDetail = detail,
+                    isLoadingMatchDetail = false,
+                    matchDetailNote = if (detail.events.isEmpty() && detail.lineups.isEmpty() && detail.statistics.isEmpty()) {
+                        "已零延迟连接实时数据流：当前暂无事件记录（赛前约 45 分钟公布首发）"
+                    } else {
+                        null
+                    },
+                )
+            }
+        }.onFailure { err ->
+            uiInteraction.update {
+                if (it.selectedMatchDetail?.id != match.id) return@update it
+                it.copy(
+                    isLoadingMatchDetail = false,
+                    matchDetailNote = if (it.selectedMatchLiveDetail == null) {
+                        err.message ?: "暂无实时赛况详情"
+                    } else {
+                        it.matchDetailNote
+                    },
+                )
             }
         }
     }
 
     fun closeMatchDetail() {
+        detailPollingJob?.cancel()
+        detailPollingJob = null
         uiInteraction.update {
             it.copy(
                 selectedMatchDetail = null,
@@ -495,28 +540,33 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun refreshLiveScoresNow() {
-        if (uiInteraction.value.isRefreshingLive) return
-        viewModelScope.launch {
-            uiInteraction.update { it.copy(isRefreshingLive = true) }
-            val res = withContext(Dispatchers.IO) {
-                fixtureRepo.refreshLiveScores(force = true)
-            }
-            res.onSuccess { count ->
-                uiInteraction.update {
-                    it.copy(
-                        isRefreshingLive = false,
-                        bannerMessage = if (count > 0) "已实时更新 $count 场进行中赛事比分" else "实时接口已连接，当前所选联赛暂无正在进行的比赛",
-                    )
+    fun setForegroundActive(active: Boolean) {
+        if (active) {
+            if (liveTickerJob?.isActive == true) return
+            liveTickerJob = viewModelScope.launch {
+                withContext(Dispatchers.IO) {
+                    fixtureRepo.ensureSeededIfEmpty()
                 }
-            }.onFailure { err ->
-                uiInteraction.update {
-                    it.copy(
-                        isRefreshingLive = false,
-                        bannerMessage = "实时比分刷新失败：${err.message ?: "请检查网络"}",
-                    )
+                while (isActive) {
+                    val updatedCount = withContext(Dispatchers.IO) {
+                        fixtureRepo.refreshLiveScoresEspnFirst().getOrDefault(0)
+                    }
+                    if (updatedCount > 0) {
+                        NextMatchWidgetProvider.updateAllWidgets(getApplication())
+                    }
+                    delay(15_000L)
                 }
             }
+            uiState.value.selectedMatchDetail?.let { openMatch ->
+                if (detailPollingJob?.isActive != true && shouldAutoSyncDetail(openMatch)) {
+                    startDetailStream(openMatch)
+                }
+            }
+        } else {
+            liveTickerJob?.cancel()
+            liveTickerJob = null
+            detailPollingJob?.cancel()
+            detailPollingJob = null
         }
     }
 

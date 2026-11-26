@@ -60,7 +60,6 @@ import com.footballcalendar.app.util.MatchTimeFormatter
 fun SettingsScreen(
     state: CalendarUiState,
     onSaveDataSource: (DataSourceMode, String, String, String) -> Unit,
-    onRefreshLiveScores: () -> Unit,
     onSimulateDemoUpdate: () -> Unit,
     onUpdateSyncSettings: (Boolean, Int, Boolean) -> Unit,
     onUpdateDisplayAndNotifications: (Boolean, Boolean, Int, Boolean) -> Unit,
@@ -267,13 +266,16 @@ fun SettingsScreen(
                             Text(if (state.isSyncing) "正在同步..." else "保存并立即全量同步", fontWeight = FontWeight.Bold)
                         }
 
-                        OutlinedButton(
-                            onClick = onRefreshLiveScores,
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(14.dp),
-                            enabled = !state.isRefreshingLive,
+                        Surface(
+                            color = AppleRedTint,
+                            shape = RoundedCornerShape(12.dp),
                         ) {
-                            Text(if (state.isRefreshingLive) "正在刷新实时比分..." else "● 立即拉取全球实时进行中比分（仅耗 1 次配额）")
+                            Text(
+                                text = "● 已默认开启 ESPN + API-Football 零延迟实时同步：进行中比分每 15 秒、比赛详情页事件/阵容每 10 秒全自动更新，无需任何手动按钮",
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = AppleRed,
+                            )
                         }
 
                         if (selectedMode == DataSourceMode.DEMO) {

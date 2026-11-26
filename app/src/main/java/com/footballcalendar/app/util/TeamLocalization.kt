@@ -169,7 +169,12 @@ object TeamLocalization {
         "Vitória SC" to "吉马良斯",
         "Galatasaray" to "加拉塔萨雷",
         "Fenerbahçe SK" to "费内巴切", "Fenerbahce" to "费内巴切",
-        "Beşiktaş JK" to "贝西克塔斯",
+        "Beşiktaş JK" to "贝西克塔斯", "Besiktas" to "贝西克塔斯",
+        "Hapoel Be'er" to "贝尔谢巴夏普尔",
+        "Vitoria" to "维多利亚",
+        "Internazionale" to "国际米兰",
+        "Kashima" to "鹿岛鹿角",
+        "Port FC" to "泰港",
         "Olympiacos" to "奥林匹亚科斯", "PAOK" to "塞萨洛尼基", "Panathinaikos" to "帕纳辛奈科斯",
         "Rangers FC" to "流浪者", "Celtic FC" to "凯尔特人",
         "Royale Union Saint-Gilloise" to "圣吉罗斯联合", "Union St. Gilloise" to "圣吉罗斯联合",
@@ -609,10 +614,29 @@ object TeamLocalization {
                 totalRows >= 18 && rank >= totalRows - 1 -> "RELEGATION" to "降级区"
                 else -> "NONE" to ""
             }
-            "CL" -> when {
+            "CL", "UEL", "UECL" -> when {
                 rank <= 8 -> "UCL" to "16强直通区"
                 rank <= 24 -> "PLAYOFF" to "淘汰赛附加赛区"
                 else -> "RELEGATION" to "出局区"
+            }
+            "ACL" -> when {
+                rank <= 8 -> "UCL" to "淘汰赛晋级区"
+                else -> "RELEGATION" to "出局区"
+            }
+            "J1" -> when {
+                rank <= 2 -> "UCL" to "亚冠精英赛区"
+                rank == 3 -> "UEL" to "亚冠二级资格区"
+                totalRows >= 18 && rank >= totalRows - 2 -> "RELEGATION" to "降级区"
+                else -> "NONE" to ""
+            }
+            "AL" -> when {
+                rank <= 6 -> "PLAYOFF" to "季后赛区"
+                else -> "NONE" to ""
+            }
+            "MLS" -> when {
+                rank <= 7 -> "UCL" to "季后赛直通区"
+                rank in 8..9 -> "PLAYOFF" to "外卡附加赛区"
+                else -> "NONE" to ""
             }
             "ELC" -> when {
                 rank <= 2 -> "PROMOTION" to "英超直通升级区"
@@ -636,6 +660,40 @@ object TeamLocalization {
                 else -> "NONE" to ""
             }
             else -> "NONE" to ""
+        }
+    }
+
+    fun localizeEspnGroup(name: String?): String {
+        val raw = name?.trim().orEmpty()
+        if (raw.isEmpty()) return ""
+        val low = raw.lowercase()
+        if (low in setOf("regular season", "league phase", "overall")) return ""
+        return when {
+            low == "eastern conference" -> "东部联盟"
+            low == "western conference" -> "西部联盟"
+            low == "east region" -> "东亚区"
+            low == "west region" -> "西亚区"
+            low == "east" -> "东区"
+            low == "west" -> "西区"
+            low.startsWith("group ") -> "小组 ${raw.substring(6)}"
+            else -> raw
+        }
+    }
+
+    fun localizeEspnZone(desc: String?, code: String, rank: Int, totalRows: Int): Pair<String, String> {
+        val d = desc.orEmpty().lowercase()
+        return when {
+            "relegation playoff" in d || "relegation play-off" in d -> "RELEGATION_PLAYOFF" to "升降级附加赛区"
+            "relegation" in d || "relegated" in d -> "RELEGATION" to "降级区"
+            "champions league" in d && ("qualif" in d || "playoff" in d) -> "UCL_QUAL" to "欧冠资格赛区"
+            "champions league" in d -> "UCL" to "欧冠正赛区"
+            "europa league" in d -> "UEL" to "欧联杯区"
+            "conference league" in d -> "UECL" to "欧协联区"
+            "round of 16" in d || "next round" in d || "knockout stage" in d -> "UCL" to "16强直通区"
+            "knockout" in d || "playoff" in d || "play-off" in d || "finals series" in d || "final series" in d -> "PLAYOFF" to "季后/淘汰附加赛区"
+            "promotion playoff" in d -> "PLAYOFF" to "升级附加赛区"
+            "promotion" in d || "promoted" in d -> "PROMOTION" to "升级区"
+            else -> determineStandingZone(code, rank, totalRows)
         }
     }
 }
