@@ -1373,7 +1373,7 @@ private fun MatchLiveDetailSection(
                 }
             }
 
-            if (!note.isNullOrBlank() && (liveDetail == null || (liveDetail.events.isEmpty() && liveDetail.lineups.isEmpty() && liveDetail.statistics.isEmpty()))) {
+            if (!note.isNullOrBlank() && (liveDetail == null || (liveDetail.events.isEmpty() && liveDetail.lineups.isEmpty() && liveDetail.stats.isEmpty()))) {
                 Text(note, style = MaterialTheme.typography.bodySmall, color = InkSecondary)
             }
 
@@ -1468,10 +1468,6 @@ private fun MatchLiveDetailSection(
                             Text(sp.awayValue, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = UclBlue, textAlign = TextAlign.End, modifier = Modifier.width(56.dp))
                         }
                     }
-                }
-
-                if (!note.isNullOrBlank()) {
-                    Text(note, style = MaterialTheme.typography.bodySmall, color = InkSecondary)
                 }
             }
         }

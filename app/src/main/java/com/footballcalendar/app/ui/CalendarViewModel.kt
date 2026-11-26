@@ -349,7 +349,7 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
                 val currentDetail = uiInteraction.value.selectedMatchLiveDetail
                 val hasCompleteFinal = currentMatch.status == MatchStatus.FINISHED &&
                     currentDetail != null &&
-                    (currentDetail.events.isNotEmpty() || currentDetail.lineups.isNotEmpty() || currentDetail.statistics.isNotEmpty())
+                    (currentDetail.events.isNotEmpty() || currentDetail.lineups.isNotEmpty() || currentDetail.stats.isNotEmpty())
                 if (hasCompleteFinal) break
 
                 val ko = MatchTimeFormatter.parseInstant(currentMatch.utcDate)
@@ -374,7 +374,7 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
                 it.copy(
                     selectedMatchLiveDetail = detail,
                     isLoadingMatchDetail = false,
-                    matchDetailNote = if (detail.events.isEmpty() && detail.lineups.isEmpty() && detail.statistics.isEmpty()) {
+                    matchDetailNote = if (detail.events.isEmpty() && detail.lineups.isEmpty() && detail.stats.isEmpty()) {
                         "已零延迟连接实时数据流：当前暂无事件记录（赛前约 45 分钟公布首发）"
                     } else {
                         null
