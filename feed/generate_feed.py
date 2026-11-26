@@ -20,6 +20,7 @@ import pathlib
 import re
 import sys
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -1279,7 +1280,7 @@ def write_feed_outputs(
     ics_dir.mkdir(parents=True, exist_ok=True)
 
     payload = {
-        "schemaVersion": 5,
+        "schemaVersion": 6,
         "generatedAtUtc": format_utc_iso(now),
         "mode": mode,
         "competitions": [
@@ -1738,12 +1739,72 @@ def _fetch_wiki_pageimages_batch(names: list[str]) -> dict[str, str]:
     return resolved
 
 
+def _fetch_wikidata_portraits_batch(names: list[str]) -> dict[str, str]:
+    if not names:
+        return {}
+    variant_to_raw: dict[str, str] = {}
+    for raw in names:
+        clean = raw.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ").strip()
+        if len(clean) < 2:
+            continue
+        variant_to_raw[clean] = raw
+        ascii_nm = "".join(c for c in unicodedata.normalize("NFD", clean) if unicodedata.category(c) != "Mn")
+        if ascii_nm != clean and len(ascii_nm) >= 2:
+            variant_to_raw.setdefault(ascii_nm, raw)
+    if not variant_to_raw:
+        return {}
+
+    values_clause = " ".join(f'"{v}"@en' for v in variant_to_raw.keys())
+    sparql = (
+        "SELECT ?name ?img WHERE {\n"
+        f"  VALUES ?name {{ {values_clause} }}\n"
+        "  { ?item rdfs:label ?name . } UNION { ?item skos:altLabel ?name . }\n"
+        "  ?item wdt:P106 wd:Q937857 .\n"
+        "  ?item wdt:P18 ?img .\n"
+        "}"
+    )
+    body = urllib.parse.urlencode({"query": sparql, "format": "json"}).encode("utf-8")
+    req = urllib.request.Request(
+        "https://query.wikidata.org/sparql",
+        data=body,
+        headers={
+            "User-Agent": "FootballCalendarSync/6.0 (https://github.com/kiki1112/football-calendar-android)",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/sparql-results+json",
+        },
+    )
+    payload: dict[str, Any] = {}
+    for attempt in range(2):
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+            break
+        except Exception:  # noqa: BLE001
+            if attempt == 0:
+                time.sleep(0.4)
+            else:
+                return {}
+
+    resolved: dict[str, str] = {}
+    for row in (payload.get("results") or {}).get("bindings") or []:
+        nm = (row.get("name") or {}).get("value") or ""
+        img = (row.get("img") or {}).get("value") or ""
+        raw_target = variant_to_raw.get(nm)
+        if raw_target and img and raw_target not in resolved:
+            if img.startswith("http://"):
+                img = "https://" + img[7:]
+            if "Special:FilePath" in img and "width=" not in img:
+                img = f"{img}?width=300"
+            resolved[raw_target] = img
+    return resolved
+
+
 def enrich_missing_portraits(
     teams: list[dict[str, Any]],
     players: list[dict[str, Any]],
-    max_batches: int = 120,
+    max_batches: int = 400,
 ) -> None:
-    """Resolve real-person Wikipedia thumbnails in batches of 45 for squads & player rankings."""
+    """Resolve real-person Wikipedia + Wikidata SPARQL thumbnails for squads & ranked players."""
     missing_names: list[str] = []
     seen: set[str] = set()
     for p in players:
@@ -1763,13 +1824,22 @@ def enrich_missing_portraits(
 
     chunks = [missing_names[i : i + 45] for i in range(0, min(len(missing_names), max_batches * 45), 45)]
     resolved: dict[str, str] = {}
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=5) as pool:
         for res in pool.map(
             lambda ch: _fetch_wiki_pageimages_batch(ch) if ch else {},
             chunks,
         ):
             if res:
                 resolved.update(res)
+
+    # Stage 2: Wikidata SPARQL matching legal passport names / altLabels (e.g. "Pedro González López" -> Pedri)
+    still_missing = [nm for nm in missing_names if nm not in resolved][:1000]
+    if still_missing:
+        wd_chunks = [still_missing[i : i + 50] for i in range(0, len(still_missing), 50)]
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            for res in pool.map(_fetch_wikidata_portraits_batch, wd_chunks):
+                if res:
+                    resolved.update(res)
 
     if not resolved:
         return
@@ -1785,6 +1855,62 @@ def enrich_missing_portraits(
                 nm = (sq.get("name") or "").strip()
                 if nm in resolved:
                     sq["portraitUrl"] = resolved[nm]
+
+
+def _translate_espn_commentary(raw_text: str, type_key: str, team_zh: str, p1: str, p2: str) -> str:
+    low = raw_text.lower()
+    p1_zh = localize_player(p1)[0] if p1 else ""
+    p2_zh = localize_player(p2)[0] if p2 else ""
+    tag = f"[{team_zh}] " if team_zh else ""
+    if "lineups are announced" in low:
+        return "📋 双方公布首发阵容，球员入场热身"
+    if "first half begins" in low:
+        return "📣 上半场哨响，比赛正式开始"
+    if "second half begins" in low:
+        return "📣 下半场开球，双方易边再战"
+    if "first half ends" in low or "halftime" in low:
+        return "⏱ 上半场结束，进入中场休息"
+    if "match ends" in low or "second half ends" in low or "full time" in low:
+        return "🏁 裁判吹响终场哨，全场比赛结束"
+    if "own goal" in type_key or "own goal" in low:
+        return f"⚽ {tag}乌龙球！{p1_zh} 不慎自摆乌龙"
+    if "penalty" in type_key and "goal" in low:
+        return f"⚽ {tag}点球破门！{p1_zh} 主罚命中"
+    if "goal" in type_key or low.startswith("goal!"):
+        ass = f"（助攻：{p2_zh}）" if p2_zh else ""
+        return f"⚽ {tag}破门得分！{p1_zh} 建功{ass}"
+    if "red" in type_key or "red card" in low:
+        return f"🟥 {tag}{p1_zh} 被红牌罚下！"
+    if "yellow" in type_key or "yellow card" in low:
+        return f"🟨 {tag}{p1_zh} 犯规领到黄牌"
+    if "substitution" in type_key or "substitution" in low:
+        return f"🔄 {tag}战术换人：↑ {p1_zh} 替补登场" + (f"，↓ 换下 {p2_zh}" if p2_zh else "")
+    if "shot-on-target" in type_key or "attempt saved" in low:
+        return f"🎯 {tag}{p1_zh} 射门命中门框范围内被扑救"
+    if "shot-off-target" in type_key or "attempt missed" in low:
+        return f"💨 {tag}{p1_zh} 射门偏出球门"
+    if "shot-blocked" in type_key or "attempt blocked" in low:
+        return f"🛡 {tag}{p1_zh} 射门被对方防线封堵"
+    if "corner" in type_key or low.startswith("corner"):
+        return f"🚩 {tag}赢得角球机会"
+    if "offside" in type_key or "offside" in low:
+        return f"⛳ {tag}{p1_zh or '进攻队员'}越位"
+    if "foul" in type_key or "foul by" in low:
+        return f"📢 {tag}{p1_zh or '球员'}犯规"
+    if "free kick" in low:
+        return f"📍 {tag}{p1_zh or '球队'}赢得任意球"
+    if "var" in type_key or "var" in low:
+        return "📺 VAR 视频助理裁判核查"
+    return f"{tag}{p1_zh}" if (tag or p1_zh) else raw_text
+
+
+def _parse_clock_parts(clock_str: str) -> tuple[int, int | None]:
+    if "'" not in clock_str:
+        return 0, None
+    parts_c = clock_str.replace("'", "").split("+")
+    mins = int(parts_c[0].strip()) if parts_c[0].strip().isdigit() else 0
+    extra = int(parts_c[1].strip()) if len(parts_c) > 1 and parts_c[1].strip().isdigit() else None
+    return mins, extra
 
 
 def fetch_espn_summary_detail(match_id: str, slug: str, event_id: str) -> dict[str, Any] | None:
@@ -1805,20 +1931,14 @@ def fetch_espn_summary_detail(match_id: str, slug: str, event_id: str) -> dict[s
 
     # Parse keyEvents for goals, cards & substitutions cleanly
     events: list[dict[str, Any]] = []
+    event_keys: set[tuple[int, str, str]] = set()
     for ke in sm.get("keyEvents") or []:
         t_text = ((ke.get("type") or {}).get("text") or "").strip()
         low_t = t_text.lower()
         if not any(k in low_t for k in ("goal", "card", "substitution", "penalty")):
             continue
         clock_str = ((ke.get("clock") or {}).get("displayValue") or "").strip()
-        mins = 0
-        extra: int | None = None
-        if "'" in clock_str:
-            parts_c = clock_str.replace("'", "").split("+")
-            if parts_c[0].strip().isdigit():
-                mins = int(parts_c[0].strip())
-            if len(parts_c) > 1 and parts_c[1].strip().isdigit():
-                extra = int(parts_c[1].strip())
+        mins, extra = _parse_clock_parts(clock_str)
         team_obj = ke.get("team") or {}
         t_id = str(team_obj.get("id") or "")
         t_name = team_obj.get("displayName") or ""
@@ -1827,7 +1947,7 @@ def fetch_espn_summary_detail(match_id: str, slug: str, event_id: str) -> dict[s
         a_name = ((parts[1].get("athlete") or {}).get("displayName") or "") if len(parts) > 1 else ""
         if "substitution" in low_t:
             ev_type = "subst"
-            ev_detail = "换人调整"
+            ev_detail = "战术换人"
         elif "red" in low_t:
             ev_type = "Card"
             ev_detail = "红牌"
@@ -1838,13 +1958,14 @@ def fetch_espn_summary_detail(match_id: str, slug: str, event_id: str) -> dict[s
             ev_type = "Goal"
             ev_detail = "点球" if "penalty" in low_t else ("乌龙球" if "own" in low_t else "进球")
         if p_name:
+            event_keys.add((mins, ev_type, p_name.lower()))
             events.append(
                 {
                     "elapsed": mins,
                     "extra": extra,
                     "teamName": t_name,
                     "teamZhName": localize_team(t_name),
-                    "isHomeTeam": (home_id and t_id == home_id) or (t_name == home_name),
+                    "isHomeTeam": bool((home_id and t_id == home_id) or (t_name == home_name)),
                     "playerName": p_name,
                     "playerZhName": localize_player(p_name)[0],
                     "assistName": a_name or None,
@@ -1853,6 +1974,79 @@ def fetch_espn_summary_detail(match_id: str, slug: str, event_id: str) -> dict[s
                     "detail": ev_detail,
                 }
             )
+
+    commentary_rows: list[dict[str, Any]] = []
+    seen_comm: set[str] = set()
+    for idx, cm in enumerate(sm.get("commentary") or []):
+        raw_text = (cm.get("text") or "").strip()
+        play = cm.get("play") or {}
+        clock_disp = ((cm.get("time") or {}).get("displayValue") or (play.get("clock") or {}).get("displayValue") or "").strip()
+        mins, extra = _parse_clock_parts(clock_disp)
+        p_type = play.get("type") or {}
+        type_slug = (p_type.get("type") or "").lower()
+        type_text = (p_type.get("text") or "").lower()
+        tm_obj = play.get("team") or {}
+        t_id = str(tm_obj.get("id") or "")
+        t_name = tm_obj.get("displayName") or tm_obj.get("name") or ""
+        t_zh = localize_team(t_name) if t_name else ""
+        is_home = bool((home_id and t_id == home_id) or (t_name and t_name == home_name)) if t_name else None
+        parts = play.get("participants") or []
+        p1 = ((parts[0].get("athlete") or {}).get("displayName") or "").strip() if len(parts) > 0 else ""
+        p2 = ((parts[1].get("athlete") or {}).get("displayName") or "").strip() if len(parts) > 1 else ""
+
+        if raw_text:
+            ckey = f"{clock_disp}|{raw_text.lower()}"
+            if ckey not in seen_comm:
+                seen_comm.add(ckey)
+                commentary_rows.append(
+                    {
+                        "sequence": int(cm.get("sequence") or idx),
+                        "clockDisplay": clock_disp or (f"{mins}'" if mins > 0 else ""),
+                        "elapsed": mins,
+                        "textEn": raw_text,
+                        "textZh": _translate_espn_commentary(raw_text, type_slug or type_text, t_zh, p1, p2),
+                        "typeSlug": type_slug,
+                        "teamName": t_name,
+                        "teamZhName": t_zh,
+                        "isHomeTeam": is_home,
+                    }
+                )
+
+        # Backfill missed key events from commentary
+        if p1 and t_name:
+            bf_type = None
+            bf_detail = ""
+            if "goal" in type_slug or "goal" in type_text or "penalty---scored" in type_slug:
+                bf_type = "Goal"
+                bf_detail = "乌龙球" if ("own" in type_slug or "own" in raw_text.lower()) else ("点球" if "penalty" in type_slug else "进球")
+            elif "red-card" in type_slug or "red card" in type_text:
+                bf_type = "Card"
+                bf_detail = "红牌"
+            elif "yellow-card" in type_slug or "yellow card" in type_text:
+                bf_type = "Card"
+                bf_detail = "黄牌"
+            elif "substitution" in type_slug or "substitution" in type_text:
+                bf_type = "subst"
+                bf_detail = "战术换人"
+            if bf_type and (mins, bf_type, p1.lower()) not in event_keys:
+                event_keys.add((mins, bf_type, p1.lower()))
+                events.append(
+                    {
+                        "elapsed": mins,
+                        "extra": extra,
+                        "teamName": t_name,
+                        "teamZhName": t_zh,
+                        "isHomeTeam": bool(is_home),
+                        "playerName": p1,
+                        "playerZhName": localize_player(p1)[0],
+                        "assistName": p2 or None,
+                        "assistZhName": localize_player(p2)[0] if p2 else None,
+                        "type": bf_type,
+                        "detail": bf_detail,
+                    }
+                )
+
+    events.sort(key=lambda ev: (ev["elapsed"], ev["extra"] or 0))
 
     lineups: list[dict[str, Any]] = []
     for r in sm.get("rosters") or []:
@@ -1937,6 +2131,7 @@ def fetch_espn_summary_detail(match_id: str, slug: str, event_id: str) -> dict[s
         "events": events,
         "lineups": lineups,
         "stats": stats_pairs,
+        "commentary": commentary_rows,
     }
 
 
@@ -2150,6 +2345,12 @@ def collect_data(
                 pair = (_normalize_team_key(m.homeTeamName), _normalize_team_key(m.awayTeamName))
                 em = espn_events_index.get(pair)
                 if em:
+                    try:
+                        same_window = abs((parse_utc_iso(em.utcDate) - parse_utc_iso(m.utcDate)).total_seconds()) <= 36 * 3600
+                    except Exception:  # noqa: BLE001
+                        same_window = False
+                    if not same_window:
+                        continue
                     collected[mid] = dataclasses.replace(
                         m,
                         espnSlug=em.espnSlug or m.espnSlug,
@@ -2193,7 +2394,7 @@ def collect_data(
             recent_targets = [
                 m for m in collected.values()
                 if m.espnSlug and m.espnEventId and m.status in {"LIVE", "PAUSED", "FINISHED"}
-            ][:40]
+            ][:60]
             if recent_targets:
                 with ThreadPoolExecutor(max_workers=6) as pool:
                     futures = [

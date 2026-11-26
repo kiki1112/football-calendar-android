@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -39,6 +40,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -416,97 +418,108 @@ fun TeamDetailBottomSheet(
     onClickSquadMember: (SquadMember) -> Unit,
     onClickMatch: (MatchItem) -> Unit,
 ) {
-    val recentFinished = matches
-        .filter { it.status == MatchStatus.FINISHED || (it.homeScore != null && it.awayScore != null && !it.status.isLive) }
-        .sortedByDescending { it.utcDate }
-    val upcomingMatches = matches
-        .filter { it.status != MatchStatus.FINISHED && !it.status.isCancelledOrPostponed }
-        .sortedBy { it.utcDate }
+    val recentFinished = remember(matches, team.name) {
+        matches
+            .filter { it.status == MatchStatus.FINISHED || (it.homeScore != null && it.awayScore != null && !it.status.isLive) }
+            .sortedByDescending { it.utcDate }
+            .take(12)
+    }
+    val upcomingMatches = remember(matches, team.name) {
+        matches
+            .filter { it.status != MatchStatus.FINISHED && !it.status.isCancelledOrPostponed }
+            .sortedBy { it.utcDate }
+            .take(6)
+    }
 
-    Column(
+    LazyColumn(
         modifier = Modifier
             .fillMaxWidth()
             .fillMaxHeight(0.84f)
-            .verticalScroll(rememberScrollState())
-            .navigationBarsPadding()
-            .padding(horizontal = 20.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+            .navigationBarsPadding(),
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         if (canNavigateBack) {
-            Surface(
-                onClick = onNavigateBack,
-                color = AppleCanvas,
-                shape = RoundedCornerShape(999.dp),
+            item {
+                Surface(
+                    onClick = onNavigateBack,
+                    color = AppleCanvas,
+                    shape = RoundedCornerShape(999.dp),
+                ) {
+                    Text(
+                        text = "‹ 返回上一页",
+                        color = AppleRed,
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                    )
+                }
+            }
+        }
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text(
-                    text = "‹ 返回上一页",
-                    color = AppleRed,
-                    fontWeight = FontWeight.Bold,
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                TeamCrest(url = team.crest, teamName = team.zhName, size = 56.dp)
+                BilingualTextColumn(
+                    zhName = team.zhName,
+                    enName = team.name,
+                    zhFontSize = 20.sp,
+                    enFontSize = 12.sp,
+                    zhFontWeight = FontWeight.ExtraBold,
+                    modifier = Modifier.weight(1f),
+                )
+                FilterChip(
+                    selected = isFavorite,
+                    onClick = onToggleFavorite,
+                    label = { Text(if (isFavorite) "已关注" else "关注") },
+                    leadingIcon = {
+                        Icon(
+                            if (isFavorite) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    },
                 )
             }
         }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            TeamCrest(url = team.crest, teamName = team.zhName, size = 56.dp)
-            BilingualTextColumn(
-                zhName = team.zhName,
-                enName = team.name,
-                zhFontSize = 20.sp,
-                enFontSize = 12.sp,
-                zhFontWeight = FontWeight.ExtraBold,
-                modifier = Modifier.weight(1f),
-            )
-            FilterChip(
-                selected = isFavorite,
-                onClick = onToggleFavorite,
-                label = { Text(if (isFavorite) "已关注" else "关注") },
-                leadingIcon = {
-                    Icon(
-                        if (isFavorite) Icons.Filled.Star else Icons.Outlined.StarBorder,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                    )
-                },
-            )
-        }
 
         if (standing != null) {
-            Surface(color = AppleCanvas.copy(alpha = 0.85f), shape = RoundedCornerShape(16.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(14.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column {
-                        Text(
-                            "${CompetitionCatalog.zhNameOrFallback(standing.competitionCode, standing.competitionCode)} No.${standing.rank}",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 16.sp,
-                            color = AppleRed,
-                        )
-                        Text(
-                            "${standing.won}胜 ${standing.draw}平 ${standing.lost}负 · 净胜 ${standing.goalDifference} · ${standing.points} 分",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = InkSecondary,
-                        )
-                    }
-                    if (standing.zoneLabel.isNotBlank()) {
-                        Surface(
-                            color = colorForZone(standing.zoneType).copy(alpha = 0.14f),
-                            shape = RoundedCornerShape(999.dp),
-                        ) {
+            item {
+                Surface(color = AppleCanvas.copy(alpha = 0.85f), shape = RoundedCornerShape(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column {
                             Text(
-                                text = standing.zoneLabel,
-                                color = colorForZone(standing.zoneType),
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                "${CompetitionCatalog.zhNameOrFallback(standing.competitionCode, standing.competitionCode)} No.${standing.rank}",
+                                fontWeight = FontWeight.Black,
+                                fontSize = 16.sp,
+                                color = AppleRed,
                             )
+                            Text(
+                                "${standing.won}胜 ${standing.draw}平 ${standing.lost}负 · 净胜 ${standing.goalDifference} · ${standing.points} 分",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = InkSecondary,
+                            )
+                        }
+                        if (standing.zoneLabel.isNotBlank()) {
+                            Surface(
+                                color = colorForZone(standing.zoneType).copy(alpha = 0.14f),
+                                shape = RoundedCornerShape(999.dp),
+                            ) {
+                                Text(
+                                    text = standing.zoneLabel,
+                                    color = colorForZone(standing.zoneType),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                )
+                            }
                         }
                     }
                 }
@@ -514,41 +527,45 @@ fun TeamDetailBottomSheet(
         }
 
         // Club Metadata
-        Surface(color = AppleCanvas.copy(alpha = 0.85f), shape = RoundedCornerShape(16.dp)) {
-            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
-                if (team.coachZhName.isNotBlank() || team.coachName.isNotBlank()) {
-                    ClubMetaRow("主教练", "${team.coachZhName} (${team.coachName})")
-                    HorizontalDivider(color = AppleDivider)
+        item {
+            Surface(color = AppleCanvas.copy(alpha = 0.85f), shape = RoundedCornerShape(16.dp)) {
+                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
+                    if (team.coachZhName.isNotBlank() || team.coachName.isNotBlank()) {
+                        ClubMetaRow("主教练", "${team.coachZhName} (${team.coachName})")
+                        HorizontalDivider(color = AppleDivider)
+                    }
+                    if (team.venue.isNotBlank()) {
+                        ClubMetaRow("主场球场", team.venue)
+                        HorizontalDivider(color = AppleDivider)
+                    }
+                    if (team.founded > 0) {
+                        ClubMetaRow("成立年份", "${team.founded} 年")
+                        HorizontalDivider(color = AppleDivider)
+                    }
+                    ClubMetaRow("队列人数", "${team.squad.size} 名一线队成员")
                 }
-                if (team.venue.isNotBlank()) {
-                    ClubMetaRow("主场球场", team.venue)
-                    HorizontalDivider(color = AppleDivider)
-                }
-                if (team.founded > 0) {
-                    ClubMetaRow("成立年份", "${team.founded} 年")
-                    HorizontalDivider(color = AppleDivider)
-                }
-                ClubMetaRow("队列人数", "${team.squad.size} 名一线队成员")
             }
         }
 
         // Historical Matches Section
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("历史比赛记录（点击看进球/阵容详情）", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-            if (isLoadingHistory) {
-                CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = AppleRed)
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("历史比赛记录（点击看进球/阵容详情）", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                if (isLoadingHistory) {
+                    CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = AppleRed)
+                }
             }
         }
         if (recentFinished.isEmpty() && isLoadingHistory) {
-            Text("正在同步全赛季历史战绩...", style = MaterialTheme.typography.bodySmall, color = InkSecondary)
+            item { Text("正在同步全赛季历史战绩...", style = MaterialTheme.typography.bodySmall, color = InkSecondary) }
         } else if (recentFinished.isEmpty()) {
-            Text("暂无该球队近期已完赛历史记录", style = MaterialTheme.typography.bodySmall, color = InkTertiary)
+            item { Text("暂无该球队近期已完赛历史记录", style = MaterialTheme.typography.bodySmall, color = InkTertiary) }
         } else {
-            recentFinished.take(12).forEach { m ->
+            items(recentFinished, key = { "hist_${it.id}" }) { m ->
                 val isHome = m.homeTeamZhName == team.zhName || m.homeTeamName.equals(team.name, true)
                 val myScore = if (isHome) m.homeScore else m.awayScore
                 val oppScore = if (isHome) m.awayScore else m.homeScore
@@ -600,8 +617,8 @@ fun TeamDetailBottomSheet(
         }
 
         if (upcomingMatches.isNotEmpty()) {
-            Text("即将进行的赛程", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-            upcomingMatches.take(6).forEach { m ->
+            item { Text("即将进行的赛程", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold) }
+            items(upcomingMatches, key = { "up_${it.id}" }) { m ->
                 Surface(
                     onClick = { onClickMatch(m) },
                     color = AppleCanvas.copy(alpha = 0.8f),
@@ -623,17 +640,19 @@ fun TeamDetailBottomSheet(
             }
         }
 
-        // Squad List with Real-Person Portraits
-        Text("全队球员名单（点击查看详情）", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+        // Squad List with Real-Person Portraits (lazy items!)
+        item { Text("全队球员名单（点击查看详情）", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold) }
         if (isLoading && team.squad.isEmpty()) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = AppleRed)
-                Text("正在获取球队阵容与头像...", style = MaterialTheme.typography.bodySmall, color = InkSecondary)
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = AppleRed)
+                    Text("正在获取球队阵容与头像...", style = MaterialTheme.typography.bodySmall, color = InkSecondary)
+                }
             }
         } else if (team.squad.isEmpty()) {
-            Text("当前暂未收录该球队大名单（可查看上方历史战绩与比赛详情）", style = MaterialTheme.typography.bodySmall, color = InkTertiary)
+            item { Text("当前暂未收录该球队大名单（可查看上方历史战绩与比赛详情）", style = MaterialTheme.typography.bodySmall, color = InkTertiary) }
         } else {
-            team.squad.forEach { member ->
+            items(team.squad, key = { "${it.id}_${it.name}" }) { member ->
                 Surface(
                     onClick = { onClickSquadMember(member) },
                     color = AppleCanvas.copy(alpha = 0.8f),
@@ -673,7 +692,7 @@ fun TeamDetailBottomSheet(
                 }
             }
         }
-        Spacer(modifier = Modifier.height(16.dp))
+        item { Spacer(modifier = Modifier.height(16.dp)) }
     }
 }
 

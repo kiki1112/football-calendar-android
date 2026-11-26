@@ -3,6 +3,8 @@ package com.footballcalendar.app
 import android.app.Application
 import coil.ImageLoader
 import coil.decode.SvgDecoder
+import coil.disk.DiskCache
+import coil.memory.MemoryCache
 import com.footballcalendar.app.calendar.SystemCalendarSyncManager
 import com.footballcalendar.app.data.local.AppDatabase
 import com.footballcalendar.app.data.preferences.UserPreferencesRepository
@@ -39,27 +41,38 @@ class AppContainer(application: Application) {
     }
 
     private val okHttpClient: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
+        .connectTimeout(12, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
         .addInterceptor { chain ->
             val req = chain.request().newBuilder()
-                .header("User-Agent", "FootballCalendarApp/2.0 (https://github.com/kiki1112/football-calendar-android)")
+                .header("User-Agent", "FootballCalendarApp/2.4 (https://github.com/kiki1112/football-calendar-android)")
                 .build()
             chain.proceed(req)
         }
         .addInterceptor(
             HttpLoggingInterceptor().apply {
-                level = HttpLoggingInterceptor.Level.BASIC
+                level = HttpLoggingInterceptor.Level.NONE
             },
         )
         .build()
 
     val imageLoader: ImageLoader = ImageLoader.Builder(application)
         .okHttpClient(okHttpClient)
+        .memoryCache {
+            MemoryCache.Builder(application)
+                .maxSizePercent(0.18)
+                .build()
+        }
+        .diskCache {
+            DiskCache.Builder()
+                .directory(application.cacheDir.resolve("image_cache"))
+                .maxSizeBytes(64L * 1024L * 1024L)
+                .build()
+        }
         .components {
             add(SvgDecoder.Factory())
         }
-        .crossfade(true)
+        .allowHardware(true)
         .build()
 
     private val retrofit: Retrofit = Retrofit.Builder()

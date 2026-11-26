@@ -145,7 +145,7 @@ class GenerateFeedTest(unittest.TestCase):
             )
 
             fixtures_json = json.loads((out_dir / "fixtures.json").read_text(encoding="utf-8"))
-            self.assertEqual(fixtures_json["schemaVersion"], 5)
+            self.assertEqual(fixtures_json["schemaVersion"], 6)
             self.assertEqual(len(fixtures_json["matches"]), len(matches))
             self.assertEqual(len(fixtures_json["standings"]), len(standings))
             self.assertEqual(len(fixtures_json["players"]), len(players))
@@ -162,6 +162,28 @@ class GenerateFeedTest(unittest.TestCase):
             self.assertNotIn("第1名", html_text)
             self.assertTrue(gf.resolve_team_logo("Norway").endswith("/nor.png"))
             self.assertTrue(gf.resolve_team_logo("埃及国家队").endswith("/egy.png"))
+
+    def test_commentary_translation_and_clock_parsing(self) -> None:
+        self.assertEqual(gf._parse_clock_parts("45'+3'"), (45, 3))
+        self.assertEqual(gf._parse_clock_parts("19'"), (19, None))
+        goal_zh = gf._translate_espn_commentary(
+            "Goal! Bournemouth 1, Nottingham Forest 0. Evanilson right footed shot.",
+            "goal",
+            "伯恩茅斯",
+            "Evanilson",
+            "James Hill",
+        )
+        self.assertIn("破门得分", goal_zh)
+        self.assertIn("伯恩茅斯", goal_zh)
+        sub_zh = gf._translate_espn_commentary(
+            "Substitution, Nottingham Forest. Igor Jesus replaces Dan Ndoye.",
+            "substitution",
+            "诺丁汉森林",
+            "Igor Jesus",
+            "Dan Ndoye",
+        )
+        self.assertIn("↑", sub_zh)
+        self.assertIn("↓", sub_zh)
 
 
 if __name__ == "__main__":

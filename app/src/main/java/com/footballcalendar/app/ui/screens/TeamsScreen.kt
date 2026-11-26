@@ -96,8 +96,14 @@ fun TeamsScreen(
     var onlyFavPlayers by remember { mutableStateOf(false) }
     var onlyScorerLeaders by remember { mutableStateOf(false) }
     var selectedPlayerLeague by remember { mutableStateOf<String?>(null) }
-    var showAllPlayersExpanded by remember { mutableStateOf(false) }
+    var playerDisplayLimit by remember(selectedPlayerLeague, playerSearchQuery, onlyFavPlayers, onlyScorerLeaders) {
+        mutableIntStateOf(60)
+    }
     var customTeamInput by remember { mutableStateOf("") }
+    var teamSearchQuery by remember { mutableStateOf("") }
+    var expandedTeamLeagues by remember {
+        mutableStateOf(state.prefs.followedCompetitions.take(2).toSet())
+    }
 
     val favTeamsList = remember(state.prefs.favoriteTeams) { state.prefs.favoriteTeams.sorted() }
     var activeTeamName by remember(favTeamsList) {
@@ -231,18 +237,27 @@ fun TeamsScreen(
                 }
             }
 
-            val filteredPlayers = state.starPlayers.filter { p ->
-                val favOk = !onlyFavPlayers || p.id in state.prefs.favoritePlayers
-                val scorerOk = !onlyScorerLeaders || p.goals > 0 || p.rank > 0
-                val leagueOk = selectedPlayerLeague == null || p.competitionCode == selectedPlayerLeague
+            val filteredPlayers = remember(
+                state.starPlayers,
+                onlyFavPlayers,
+                onlyScorerLeaders,
+                selectedPlayerLeague,
+                playerSearchQuery,
+                state.prefs.favoritePlayers,
+            ) {
                 val q = playerSearchQuery.trim()
-                val queryOk = q.isEmpty() ||
-                    p.zhName.contains(q, ignoreCase = true) ||
-                    p.name.contains(q, ignoreCase = true) ||
-                    p.clubZhName.contains(q, ignoreCase = true) ||
-                    p.clubName.contains(q, ignoreCase = true) ||
-                    p.nationalZhName.contains(q, ignoreCase = true)
-                favOk && scorerOk && leagueOk && queryOk
+                state.starPlayers.filter { p ->
+                    val favOk = !onlyFavPlayers || p.id in state.prefs.favoritePlayers
+                    val scorerOk = !onlyScorerLeaders || p.goals > 0 || p.rank > 0
+                    val leagueOk = selectedPlayerLeague == null || p.competitionCode == selectedPlayerLeague
+                    val queryOk = q.isEmpty() ||
+                        p.zhName.contains(q, ignoreCase = true) ||
+                        p.name.contains(q, ignoreCase = true) ||
+                        p.clubZhName.contains(q, ignoreCase = true) ||
+                        p.clubName.contains(q, ignoreCase = true) ||
+                        p.nationalZhName.contains(q, ignoreCase = true)
+                    favOk && scorerOk && leagueOk && queryOk
+                }
             }
 
             if (filteredPlayers.isEmpty()) {
@@ -271,13 +286,8 @@ fun TeamsScreen(
                     }
                 }
             } else {
-                val limit = if (showAllPlayersExpanded || playerSearchQuery.isNotBlank() || selectedPlayerLeague != null) {
-                    filteredPlayers.size
-                } else {
-                    100
-                }
-                val displayed = filteredPlayers.take(limit)
-                items(displayed, key = { it.id }) { player ->
+                val displayed = filteredPlayers.take(playerDisplayLimit)
+                items(displayed, key = { "${it.id}_${it.clubName}" }) { player ->
                     PlayerRankCard(
                         player = player,
                         isFavorite = player.id in state.prefs.favoritePlayers,
@@ -286,14 +296,15 @@ fun TeamsScreen(
                         onToggleFavorite = { onToggleFavoritePlayer(player.id) },
                     )
                 }
-                if (filteredPlayers.size > limit) {
+                if (filteredPlayers.size > playerDisplayLimit) {
+                    val remaining = (filteredPlayers.size - playerDisplayLimit).coerceAtMost(100)
                     item {
                         OutlinedButton(
-                            onClick = { showAllPlayersExpanded = true },
+                            onClick = { playerDisplayLimit += 100 },
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                             shape = RoundedCornerShape(14.dp),
                         ) {
-                            Text("展开全部 ${filteredPlayers.size} 名球员（当前显示前 $limit 名）")
+                            Text("加载更多 +$remaining 名球员（已显示 ${displayed.size} / ${filteredPlayers.size}）")
                         }
                     }
                 }
@@ -381,7 +392,36 @@ fun TeamsScreen(
                 }
             }
 
-            // All Teams Catalog grouped by Competition
+            // All Teams Catalog grouped lazily by Competition (collapsible to avoid 400+ synchronous chips)
+            val teamsByComp = remember(state.standingsByLeague, state.allTeams, state.allMatches, teamSearchQuery) {
+                val q = teamSearchQuery.trim()
+                CompetitionCatalog.all.mapNotNull { comp ->
+                    val rawMap = buildMap<String, String> {
+                        state.standingsByLeague[comp.code].orEmpty().forEach { s ->
+                            put(s.teamZhName, s.teamName)
+                        }
+                        state.allTeams.filter { it.competitionCode == comp.code }.forEach { t ->
+                            putIfAbsent(t.zhName, t.name)
+                        }
+                        state.allMatches.filter { it.competitionCode == comp.code }.forEach { m ->
+                            putIfAbsent(m.homeTeamZhName, m.homeTeamName)
+                            putIfAbsent(m.awayTeamZhName, m.awayTeamName)
+                        }
+                        if (isEmpty()) {
+                            comp.popularTeams.forEach { pt -> put(pt, pt) }
+                        }
+                    }
+                    val filteredMap = if (q.isEmpty()) {
+                        rawMap
+                    } else {
+                        rawMap.filter { (zh, en) ->
+                            zh.contains(q, ignoreCase = true) || en.contains(q, ignoreCase = true)
+                        }
+                    }
+                    if (filteredMap.isEmpty()) null else comp to filteredMap
+                }
+            }
+
             item {
                 Surface(
                     modifier = Modifier
@@ -390,13 +430,13 @@ fun TeamsScreen(
                     color = Color.White,
                     shape = RoundedCornerShape(20.dp),
                 ) {
-                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("关注球队管理（全赛事全部队伍）", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("关注球队管理（按赛事折叠加载）", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         OutlinedTextField(
                             value = customTeamInput,
                             onValueChange = { customTeamInput = it },
                             modifier = Modifier.fillMaxWidth(),
-                            label = { Text("添加俱乐部或国家队（中文或英文）") },
+                            label = { Text("添加自定义球队（中文或英文）") },
                             singleLine = true,
                             trailingIcon = {
                                 IconButton(
@@ -413,63 +453,87 @@ fun TeamsScreen(
                                 }
                             },
                         )
+                        OutlinedTextField(
+                            value = teamSearchQuery,
+                            onValueChange = { teamSearchQuery = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            placeholder = { Text("搜索俱乐部或国家队（中/英文）...") },
+                            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                            singleLine = true,
+                        )
+                    }
+                }
+            }
 
-                        CompetitionCatalog.all.forEach { comp ->
-                            val teamsFromMatches = buildMap<String, String> {
-                                state.standingsByLeague[comp.code].orEmpty().forEach { s ->
-                                    put(s.teamZhName, s.teamName)
-                                }
-                                state.allTeams.filter { it.competitionCode == comp.code }.forEach { t ->
-                                    putIfAbsent(t.zhName, t.name)
-                                }
-                                state.allMatches.filter { it.competitionCode == comp.code }.forEach { m ->
-                                    putIfAbsent(m.homeTeamZhName, m.homeTeamName)
-                                    putIfAbsent(m.awayTeamZhName, m.awayTeamName)
-                                }
-                                if (isEmpty()) {
-                                    comp.popularTeams.forEach { pt -> put(pt, pt) }
-                                }
-                            }
-                            if (teamsFromMatches.isNotEmpty()) {
-                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Text(
-                                        "${comp.zhName} · ${comp.enName} (${teamsFromMatches.size} 队)",
-                                        style = MaterialTheme.typography.labelLarge,
-                                        color = AppleRed,
-                                        fontWeight = FontWeight.Bold,
-                                    )
-                                    FlowRow(
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                                    ) {
-                                        teamsFromMatches.entries.forEach { (zh, en) ->
-                                            val isFav = zh in state.prefs.favoriteTeams || en in state.prefs.favoriteTeams
-                                            FilterChip(
-                                                selected = isFav,
-                                                onClick = {
-                                                    activeTeamName = zh
-                                                    onOpenTeamDetail(
-                                                        en,
-                                                        zh,
-                                                        comp.code,
-                                                        TeamAssetCatalog.resolveTeamLogo(en),
-                                                    )
-                                                },
-                                                label = {
-                                                    Text(if (en.equals(zh, true)) zh else "$zh ($en)", fontSize = 11.sp)
-                                                },
-                                                leadingIcon = {
-                                                    Icon(
-                                                        if (isFav) Icons.Filled.Star else Icons.Outlined.StarBorder,
-                                                        contentDescription = "关注或查看球队",
-                                                        modifier = Modifier
-                                                            .size(15.dp)
-                                                            .clickable { onToggleFavoriteTeam(zh) },
-                                                    )
-                                                },
-                                            )
-                                        }
+            items(teamsByComp, key = { (comp, _) -> "team_comp_${comp.code}" }) { (comp, teamsFromMatches) ->
+                val isExpanded = teamSearchQuery.isNotBlank() || comp.code in expandedTeamLeagues
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    color = Color.White,
+                    shape = RoundedCornerShape(20.dp),
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable {
+                                    expandedTeamLeagues = if (comp.code in expandedTeamLeagues) {
+                                        expandedTeamLeagues - comp.code
+                                    } else {
+                                        expandedTeamLeagues + comp.code
                                     }
+                                }
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                "${comp.zhName} · ${comp.enName} (${teamsFromMatches.size} 队)",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = AppleRed,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            Text(
+                                text = if (isExpanded) "收起 ▴" else "展开 ▾",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = InkSecondary,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                        if (isExpanded) {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                teamsFromMatches.entries.forEach { (zh, en) ->
+                                    val isFav = zh in state.prefs.favoriteTeams || en in state.prefs.favoriteTeams
+                                    FilterChip(
+                                        selected = isFav,
+                                        onClick = {
+                                            activeTeamName = zh
+                                            onOpenTeamDetail(
+                                                en,
+                                                zh,
+                                                comp.code,
+                                                TeamAssetCatalog.resolveTeamLogo(en),
+                                            )
+                                        },
+                                        label = {
+                                            Text(if (en.equals(zh, true)) zh else "$zh ($en)", fontSize = 11.sp)
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                if (isFav) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                                                contentDescription = "关注或查看球队",
+                                                modifier = Modifier
+                                                    .size(15.dp)
+                                                    .clickable { onToggleFavoriteTeam(zh) },
+                                            )
+                                        },
+                                    )
                                 }
                             }
                         }

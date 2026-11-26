@@ -3,6 +3,7 @@ package com.footballcalendar.app.data.remote
 import com.footballcalendar.app.model.CompetitionCatalog
 import com.footballcalendar.app.model.LineupPlayerItem
 import com.footballcalendar.app.model.LiveMatchDetail
+import com.footballcalendar.app.model.MatchCommentaryItem
 import com.footballcalendar.app.model.MatchEventItem
 import com.footballcalendar.app.model.MatchItem
 import com.footballcalendar.app.model.MatchLineupSide
@@ -40,6 +41,7 @@ data class GitHubFeedLiveDetailDto(
     val events: List<GitHubFeedEventDto> = emptyList(),
     val lineups: List<GitHubFeedLineupDto> = emptyList(),
     val stats: List<GitHubFeedStatPairDto> = emptyList(),
+    val commentary: List<GitHubFeedCommentaryDto> = emptyList(),
 ) {
     fun toDomain(nowMillis: Long): LiveMatchDetail = LiveMatchDetail(
         matchId = matchId,
@@ -90,8 +92,34 @@ data class GitHubFeedLiveDetailDto(
         },
         stats = stats.map { MatchStatPair(it.labelZh, it.homeValue, it.awayValue) },
         syncedAtMillis = nowMillis,
+        commentary = commentary.map {
+            MatchCommentaryItem(
+                sequence = it.sequence,
+                clockDisplay = it.clockDisplay,
+                elapsed = it.elapsed,
+                textEn = it.textEn,
+                textZh = it.textZh.ifBlank { it.textEn },
+                typeSlug = it.typeSlug,
+                teamName = it.teamName,
+                teamZhName = TeamLocalization.preferChinese(it.teamName, it.teamZhName),
+                isHomeTeam = it.isHomeTeam,
+            )
+        },
     )
 }
+
+@Serializable
+data class GitHubFeedCommentaryDto(
+    val sequence: Int = 0,
+    val clockDisplay: String = "",
+    val elapsed: Int = 0,
+    val textEn: String = "",
+    val textZh: String = "",
+    val typeSlug: String = "",
+    val teamName: String = "",
+    val teamZhName: String = "",
+    val isHomeTeam: Boolean? = null,
+)
 
 @Serializable
 data class GitHubFeedEventDto(
@@ -606,8 +634,23 @@ data class ApiFootballFixtureItemDto(
         val homeName = teams.home.name
         val parsedEvents = events.orEmpty().map { e ->
             val tName = e.team?.name ?: ""
-            val pName = e.player?.name ?: ""
-            val aName = e.assist?.name?.takeIf { it.isNotBlank() }
+            val rawPlayer = e.player?.name ?: ""
+            val rawAssist = e.assist?.name?.takeIf { it.isNotBlank() }
+            val evType = e.type ?: ""
+            val (pName, aName) = if (evType.equals("subst", ignoreCase = true) && !rawAssist.isNullOrBlank()) {
+                rawAssist to rawPlayer
+            } else {
+                rawPlayer to rawAssist
+            }
+            val localizedDetail = when {
+                evType.equals("subst", ignoreCase = true) -> "战术换人"
+                (e.detail ?: "").contains("Yellow", true) -> "黄牌"
+                (e.detail ?: "").contains("Red", true) -> "红牌"
+                (e.detail ?: "").contains("Penalty", true) -> "点球"
+                (e.detail ?: "").contains("Own", true) -> "乌龙球"
+                evType.equals("Goal", ignoreCase = true) -> "进球"
+                else -> e.detail ?: ""
+            }
             MatchEventItem(
                 elapsed = e.time?.elapsed ?: 0,
                 extra = e.time?.extra,
@@ -618,8 +661,8 @@ data class ApiFootballFixtureItemDto(
                 playerZhName = TeamLocalization.localizePlayer(pName).first,
                 assistName = aName,
                 assistZhName = aName?.let { TeamLocalization.localizePlayer(it).first },
-                type = e.type ?: "",
-                detail = e.detail ?: "",
+                type = evType,
+                detail = localizedDetail,
             )
         }
         val parsedLineups = lineups.orEmpty().map { l ->
@@ -932,4 +975,19 @@ data class FootballDataHead2HeadResponse(
 @Serializable
 data class FootballDataTeamMatchesResponse(
     val matches: List<FootballDataMatchDto> = emptyList(),
+)
+
+@Serializable
+data class WikidataSparqlResponse(
+    val results: WikidataSparqlResultsDto? = null,
+)
+
+@Serializable
+data class WikidataSparqlResultsDto(
+    val bindings: List<Map<String, WikidataSparqlBindingValueDto>> = emptyList(),
+)
+
+@Serializable
+data class WikidataSparqlBindingValueDto(
+    val value: String = "",
 )

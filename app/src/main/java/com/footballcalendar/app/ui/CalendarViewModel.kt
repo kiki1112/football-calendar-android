@@ -35,6 +35,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -80,6 +82,8 @@ data class CalendarUiState(
     val isLoadingMatchDetail: Boolean = false,
     val isLoadingMatchH2H: Boolean = false,
     val matchDetailNote: String? = null,
+    val useTimelineView: Boolean = true,
+    val onlyGoalsFilter: Boolean = false,
     val canNavigateBackModal: Boolean = false,
 ) {
     fun standingFor(competitionCode: String, teamZh: String, teamEn: String): StandingEntry? {
@@ -115,6 +119,8 @@ private data class UiInteractionState(
     val isLoadingMatchDetail: Boolean = false,
     val isLoadingMatchH2H: Boolean = false,
     val matchDetailNote: String? = null,
+    val useTimelineView: Boolean = true,
+    val onlyGoalsFilter: Boolean = false,
     val canNavigateBackModal: Boolean = false,
 )
 
@@ -145,25 +151,84 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
     private var h2hJob: Job? = null
     private var teamHistoryJob: Job? = null
 
-    private val coreDataFlow = combine(
+    private val precomputedCoreFlow = combine(
         fixtureRepo.observeAllMatches(),
         fixtureRepo.observeAllStandings(),
         fixtureRepo.observeAllTeams(),
         fixtureRepo.starPlayersFlow,
-    ) { matches, standings, teams, players ->
-        QuadData(matches, standings, teams, players)
-    }
+    ) { allMatches, allStandings, allTeams, basePlayers ->
+        val standingsGrouped = allStandings.groupBy { it.competitionCode }
+        val rankMap = buildMap<String, StandingEntry> {
+            allStandings.forEach { entry ->
+                putIfAbsent(entry.teamName, entry)
+                putIfAbsent(entry.teamZhName, entry)
+            }
+        }
+        val leagueRankMap = buildMap<Pair<String, String>, StandingEntry> {
+            allStandings.forEach { entry ->
+                put(entry.competitionCode to entry.teamName, entry)
+                put(entry.competitionCode to entry.teamZhName, entry)
+            }
+        }
+        val teamsMap = buildMap<String, TeamDetailInfo> {
+            allTeams.forEach { t ->
+                put(t.name.lowercase(), t)
+                put(t.zhName, t)
+                put(t.shortName.lowercase(), t)
+            }
+        }
+        // Merge Scorer Leaderboard + All Squad Players across all teams on worker thread
+        val mergedPlayers = buildList {
+            val seenKey = HashSet<String>(basePlayers.size + allTeams.size * 24)
+            basePlayers.forEach { p ->
+                val key = "${p.name.lowercase()}|${p.clubName.lowercase()}"
+                if (seenKey.add(key)) add(p)
+            }
+            allTeams.forEach { team ->
+                team.squad.forEach { sq ->
+                    val key = "${sq.name.lowercase()}|${team.name.lowercase()}"
+                    if (seenKey.add(key)) {
+                        add(
+                            StarPlayer(
+                                id = sq.id,
+                                name = sq.name,
+                                zhName = sq.zhName,
+                                clubName = team.name,
+                                clubZhName = team.zhName,
+                                clubCrestUrl = team.crest,
+                                nationalName = sq.nationality,
+                                nationalZhName = TeamLocalization.localizeTeam(sq.nationality).ifBlank { sq.nationality },
+                                nationalCrestUrl = TeamAssetCatalog.resolveTeamLogo(sq.nationality),
+                                positionZh = sq.positionZh,
+                                nationalityZh = sq.nationality,
+                                shirtNumber = sq.shirtNumber,
+                                birthYear = sq.birthYear,
+                                portraitUrl = sq.portraitUrl,
+                                competitionCode = team.competitionCode,
+                                isTransliterated = sq.isTransliterated,
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+        PrecomputedCore(
+            matches = allMatches,
+            standingsGrouped = standingsGrouped,
+            rankMap = rankMap,
+            leagueRankMap = leagueRankMap,
+            teamsMap = teamsMap,
+            allTeams = allTeams,
+            mergedPlayers = mergedPlayers,
+        )
+    }.flowOn(Dispatchers.Default)
 
     val uiState: StateFlow<CalendarUiState> = combine(
-        coreDataFlow,
+        precomputedCoreFlow,
         prefsRepo.preferencesFlow,
         uiInteraction,
     ) { core, prefs, ui ->
         val allMatches = core.matches
-        val allStandings = core.standings
-        val allTeams = core.teams
-        val basePlayers = core.players
-
         val zoneId = MatchTimeFormatter.BEIJING_ZONE
         val filtered = allMatches.filter { match ->
             val leagueAllowed = match.competitionCode in prefs.followedCompetitions
@@ -201,63 +266,6 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
             ?: upcomingFollowed.firstOrNull { it.involvesAnyTeam(prefs.favoriteTeams) }
             ?: upcomingFollowed.firstOrNull()
 
-        val standingsGrouped = allStandings.groupBy { it.competitionCode }
-        val rankMap = buildMap<String, StandingEntry> {
-            allStandings.forEach { entry ->
-                putIfAbsent(entry.teamName, entry)
-                putIfAbsent(entry.teamZhName, entry)
-            }
-        }
-        val leagueRankMap = buildMap<Pair<String, String>, StandingEntry> {
-            allStandings.forEach { entry ->
-                put(entry.competitionCode to entry.teamName, entry)
-                put(entry.competitionCode to entry.teamZhName, entry)
-            }
-        }
-        val teamsMap = buildMap<String, TeamDetailInfo> {
-            allTeams.forEach { t ->
-                put(t.name.lowercase(), t)
-                put(t.zhName, t)
-                put(t.shortName.lowercase(), t)
-            }
-        }
-
-        // Merge Scorer Leaderboard + All Squad Players across all teams cleanly
-        val mergedPlayers = buildList {
-            val seenKey = HashSet<String>()
-            basePlayers.forEach { p ->
-                val key = "${p.name.lowercase()}|${p.clubName.lowercase()}"
-                if (seenKey.add(key)) add(p)
-            }
-            allTeams.forEach { team ->
-                team.squad.forEach { sq ->
-                    val key = "${sq.name.lowercase()}|${team.name.lowercase()}"
-                    if (seenKey.add(key)) {
-                        add(
-                            StarPlayer(
-                                id = sq.id,
-                                name = sq.name,
-                                zhName = sq.zhName,
-                                clubName = team.name,
-                                clubZhName = team.zhName,
-                                clubCrestUrl = team.crest,
-                                nationalName = sq.nationality,
-                                nationalZhName = TeamLocalization.localizeTeam(sq.nationality).ifBlank { sq.nationality },
-                                nationalCrestUrl = TeamAssetCatalog.resolveTeamLogo(sq.nationality),
-                                positionZh = sq.positionZh,
-                                nationalityZh = sq.nationality,
-                                shirtNumber = sq.shirtNumber,
-                                birthYear = sq.birthYear,
-                                portraitUrl = sq.portraitUrl,
-                                competitionCode = team.competitionCode,
-                                isTransliterated = sq.isTransliterated,
-                            ),
-                        )
-                    }
-                }
-            }
-        }
-
         // Sync selectedMatchDetail if scores were refreshed in Room
         val latestSelectedMatch = ui.selectedMatchDetail?.let { sel ->
             allMatches.firstOrNull { it.id == sel.id } ?: sel
@@ -274,17 +282,17 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
             matchesByDate = grouped,
             selectedDayMatches = dayMatches,
             heroMatch = hero,
-            standingsByLeague = standingsGrouped,
-            teamRankByName = rankMap,
-            teamRankByLeagueAndName = leagueRankMap,
-            teamsByName = teamsMap,
-            allTeams = allTeams,
+            standingsByLeague = core.standingsGrouped,
+            teamRankByName = core.rankMap,
+            teamRankByLeagueAndName = core.leagueRankMap,
+            teamsByName = core.teamsMap,
+            allTeams = core.allTeams,
             selectedStandingsLeague = ui.selectedStandingsLeague,
             selectedTeamDetail = ui.selectedTeamDetail,
             selectedTeamHistory = ui.selectedTeamHistory,
             isLoadingTeamDetail = ui.isLoadingTeamDetail,
             isLoadingTeamHistory = ui.isLoadingTeamHistory,
-            starPlayers = mergedPlayers,
+            starPlayers = core.mergedPlayers,
             selectedStarPlayer = ui.selectedStarPlayer,
             isSearchingPlayer = ui.isSearchingPlayer,
             prefs = prefs,
@@ -297,13 +305,23 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
             isLoadingMatchDetail = ui.isLoadingMatchDetail,
             isLoadingMatchH2H = ui.isLoadingMatchH2H,
             matchDetailNote = ui.matchDetailNote,
+            useTimelineView = ui.useTimelineView,
+            onlyGoalsFilter = ui.onlyGoalsFilter,
             canNavigateBackModal = ui.canNavigateBackModal,
         )
-    }.stateIn(
+    }.flowOn(Dispatchers.Default).stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = CalendarUiState(),
     )
+
+    fun setTimelineView(enabled: Boolean) {
+        uiInteraction.update { it.copy(useTimelineView = enabled) }
+    }
+
+    fun toggleOnlyGoals() {
+        uiInteraction.update { it.copy(onlyGoalsFilter = !it.onlyGoalsFilter) }
+    }
 
     fun selectDate(date: LocalDate) {
         uiInteraction.update {
@@ -431,7 +449,7 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
                     (ko != null && Duration.between(ko, Instant.now()).toMinutes() in -60..195)
                 if (!inLiveOrLineupWindow) break
 
-                delay(10_000L)
+                delay(if (currentMatch.status.isLive) 4_000L else 10_000L)
                 val targetMatch = uiState.value.selectedMatchDetail ?: break
                 fetchAndApplyMatchDetail(targetMatch, force = true)
             }
@@ -448,8 +466,13 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
                 it.copy(
                     selectedMatchLiveDetail = detail,
                     isLoadingMatchDetail = false,
-                    matchDetailNote = if (detail.events.isEmpty() && detail.lineups.isEmpty() && detail.stats.isEmpty()) {
-                        "已零延迟连接实时数据流：当前暂无事件记录（赛前约 45 分钟公布首发）"
+                    matchDetailNote = if (
+                        detail.events.isEmpty() &&
+                        detail.lineups.isEmpty() &&
+                        detail.stats.isEmpty() &&
+                        detail.commentary.isEmpty()
+                    ) {
+                        "已连接实时数据流（4秒自动轮询）：当前暂无事件记录（赛前约 45 分钟公布首发）"
                     } else {
                         null
                     },
@@ -952,11 +975,14 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
         uiInteraction.update { it.copy(bannerMessage = message) }
     }
 
-    private data class QuadData(
+    private data class PrecomputedCore(
         val matches: List<MatchItem>,
-        val standings: List<StandingEntry>,
-        val teams: List<TeamDetailInfo>,
-        val players: List<StarPlayer>,
+        val standingsGrouped: Map<String, List<StandingEntry>>,
+        val rankMap: Map<String, StandingEntry>,
+        val leagueRankMap: Map<Pair<String, String>, StandingEntry>,
+        val teamsMap: Map<String, TeamDetailInfo>,
+        val allTeams: List<TeamDetailInfo>,
+        val mergedPlayers: List<StarPlayer>,
     )
 
     companion object {

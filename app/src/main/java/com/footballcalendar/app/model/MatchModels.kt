@@ -269,6 +269,18 @@ data class MatchStatPair(
     val awayValue: String,
 )
 
+data class MatchCommentaryItem(
+    val sequence: Int = 0,
+    val clockDisplay: String = "",
+    val elapsed: Int = 0,
+    val textEn: String = "",
+    val textZh: String = "",
+    val typeSlug: String = "",
+    val teamName: String = "",
+    val teamZhName: String = "",
+    val isHomeTeam: Boolean? = null,
+)
+
 data class LiveMatchDetail(
     val matchId: String,
     val fixtureId: Int,
@@ -280,6 +292,7 @@ data class LiveMatchDetail(
     val lineups: List<MatchLineupSide>,
     val stats: List<MatchStatPair>,
     val syncedAtMillis: Long,
+    val commentary: List<MatchCommentaryItem> = emptyList(),
 )
 
 enum class ScheduleChangeType {

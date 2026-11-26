@@ -121,6 +121,13 @@ interface FeedApiService {
     @GET
     suspend fun fetchWikipediaLanglinks(
         @Url url: String,
-        @Header("User-Agent") userAgent: String = "FootballCalendarApp/2.3 (https://github.com/kiki1112/football-calendar-android)",
+        @Header("User-Agent") userAgent: String = "FootballCalendarApp/2.4 (https://github.com/kiki1112/football-calendar-android)",
     ): WikipediaLanglinksApiResponse
+
+    @GET
+    suspend fun fetchWikidataSparql(
+        @Url url: String,
+        @Header("User-Agent") userAgent: String = "FootballCalendarApp/2.4 (https://github.com/kiki1112/football-calendar-android)",
+        @Header("Accept") accept: String = "application/sparql-results+json",
+    ): WikidataSparqlResponse
 }

@@ -109,7 +109,7 @@ fun TeamCrest(
             AsyncImage(
                 model = ImageRequest.Builder(context)
                     .data(url)
-                    .crossfade(true)
+                    .size(160)
                     .build(),
                 imageLoader = imageLoader,
                 contentDescription = teamName,
@@ -154,7 +154,7 @@ fun PlayerPortrait(
             AsyncImage(
                 model = ImageRequest.Builder(context)
                     .data(url)
-                    .crossfade(true)
+                    .size(160)
                     .build(),
                 imageLoader = imageLoader,
                 contentDescription = playerName,

@@ -3,6 +3,7 @@ package com.footballcalendar.app.data.remote
 import com.footballcalendar.app.model.CompetitionCatalog
 import com.footballcalendar.app.model.LineupPlayerItem
 import com.footballcalendar.app.model.LiveMatchDetail
+import com.footballcalendar.app.model.MatchCommentaryItem
 import com.footballcalendar.app.model.MatchEventItem
 import com.footballcalendar.app.model.MatchItem
 import com.footballcalendar.app.model.MatchLineupSide
@@ -197,6 +198,7 @@ data class EspnSummaryResponse(
     val keyEvents: List<EspnKeyEventDto> = emptyList(),
     val rosters: List<EspnRosterSideDto> = emptyList(),
     val boxscore: EspnBoxscoreDto? = null,
+    val commentary: List<EspnCommentaryItemDto> = emptyList(),
 ) {
     fun toLiveDetail(matchId: String, eventId: String): LiveMatchDetail {
         val comp = header?.competitions?.firstOrNull()
@@ -209,19 +211,13 @@ data class EspnSummaryResponse(
         val hScore = if (showScore) homeC?.score?.toIntOrNull() else null
         val aScore = if (showScore) awayC?.score?.toIntOrNull() else null
 
-        val parsedEvents = keyEvents.mapNotNull { ke ->
+        val parsedKeyEvents = keyEvents.mapNotNull { ke ->
             val rawType = ke.type?.text?.trim().orEmpty()
             val low = rawType.lowercase()
             if (listOf("goal", "card", "substitution", "penalty").none { it in low }) return@mapNotNull null
 
             val clockStr = ke.clock?.displayValue.orEmpty().trim()
-            var mins = 0
-            var extra: Int? = null
-            if ("'" in clockStr) {
-                val partsC = clockStr.replace("'", "").split("+")
-                mins = partsC.getOrNull(0)?.trim()?.toIntOrNull() ?: 0
-                extra = partsC.getOrNull(1)?.trim()?.toIntOrNull()
-            }
+            val (mins, extra) = parseClockParts(clockStr)
             val tName = ke.team?.displayName?.ifBlank { ke.team.name }.orEmpty()
             val pName = ke.participants.getOrNull(0)?.athlete?.displayName.orEmpty()
             if (pName.isBlank()) return@mapNotNull null
@@ -232,7 +228,7 @@ data class EspnSummaryResponse(
             when {
                 "substitution" in low -> {
                     evType = "subst"
-                    evDetail = "换人调整"
+                    evDetail = "战术换人"
                 }
                 "red" in low -> {
                     evType = "Card"
@@ -266,6 +262,78 @@ data class EspnSummaryResponse(
                 detail = evDetail,
             )
         }
+
+        // Backfill missed Goal / Card / Subst events from live commentary when keyEvents is sparse
+        val eventKeys = parsedKeyEvents.map { "${it.elapsed}|${it.type}|${it.playerName.lowercase()}" }.toMutableSet()
+        val extraEvents = mutableListOf<MatchEventItem>()
+        val parsedCommentary = mutableListOf<MatchCommentaryItem>()
+        val seenComm = HashSet<String>()
+
+        commentary.forEachIndexed { idx, cm ->
+            val rawText = cm.text.trim()
+            val clockDisp = (cm.time?.displayValue?.ifBlank { null } ?: cm.play?.clock?.displayValue).orEmpty().trim()
+            val (mins, extra) = parseClockParts(clockDisp)
+            val play = cm.play
+            val typeSlug = play?.type?.type?.lowercase().orEmpty()
+            val typeText = play?.type?.text?.lowercase().orEmpty()
+            val tName = play?.team?.displayName?.ifBlank { play.team.name }.orEmpty()
+            val tZh = if (tName.isNotBlank()) TeamLocalization.localizeTeam(tName) else ""
+            val isHome = if (tName.isNotBlank()) {
+                (homeId.isNotBlank() && play?.team?.id == homeId) || tName.equals(homeName, true)
+            } else {
+                null
+            }
+            val p1 = play?.participants?.getOrNull(0)?.athlete?.displayName?.trim().orEmpty()
+            val p2 = play?.participants?.getOrNull(1)?.athlete?.displayName?.trim()?.takeIf { it.isNotBlank() }
+
+            if (rawText.isNotBlank()) {
+                val dedupeKey = "$clockDisp|${rawText.lowercase()}"
+                if (seenComm.add(dedupeKey)) {
+                    parsedCommentary += MatchCommentaryItem(
+                        sequence = if (cm.sequence > 0) cm.sequence else idx,
+                        clockDisplay = clockDisp.ifBlank { if (mins > 0) "${mins}'" else "" },
+                        elapsed = mins,
+                        textEn = rawText,
+                        textZh = translateCommentaryToZh(rawText, typeSlug.ifBlank { typeText }, tZh, p1, p2),
+                        typeSlug = typeSlug,
+                        teamName = tName,
+                        teamZhName = tZh,
+                        isHomeTeam = isHome,
+                    )
+                }
+            }
+
+            if (p1.isNotBlank() && tName.isNotBlank()) {
+                val backfill = when {
+                    "goal" in typeSlug || "goal" in typeText || "penalty---scored" in typeSlug ->
+                        "Goal" to (if ("own" in typeSlug || "own" in rawText.lowercase()) "乌龙球" else if ("penalty" in typeSlug) "点球" else "进球")
+                    "red-card" in typeSlug || "red card" in typeText -> "Card" to "红牌"
+                    "yellow-card" in typeSlug || "yellow card" in typeText -> "Card" to "黄牌"
+                    "substitution" in typeSlug || "substitution" in typeText -> "subst" to "战术换人"
+                    else -> null
+                }
+                if (backfill != null) {
+                    val ek = "$mins|${backfill.first}|${p1.lowercase()}"
+                    if (eventKeys.add(ek)) {
+                        extraEvents += MatchEventItem(
+                            elapsed = mins,
+                            extra = extra,
+                            teamName = tName,
+                            teamZhName = tZh,
+                            isHomeTeam = isHome == true,
+                            playerName = p1,
+                            playerZhName = TeamLocalization.localizePlayer(p1).first,
+                            assistName = p2,
+                            assistZhName = p2?.let { TeamLocalization.localizePlayer(it).first },
+                            type = backfill.first,
+                            detail = backfill.second,
+                        )
+                    }
+                }
+            }
+        }
+
+        val parsedEvents = (parsedKeyEvents + extraEvents).sortedWith(compareBy({ it.elapsed }, { it.extra ?: 0 }))
 
         val parsedLineups = rosters.map { r ->
             val tName = r.team?.displayName?.ifBlank { r.team.name }.orEmpty()
@@ -336,7 +404,55 @@ data class EspnSummaryResponse(
             lineups = parsedLineups,
             stats = parsedStats,
             syncedAtMillis = System.currentTimeMillis(),
+            commentary = parsedCommentary,
         )
+    }
+
+    private fun parseClockParts(clockStr: String): Pair<Int, Int?> {
+        if ("'" !in clockStr) return 0 to null
+        val partsC = clockStr.replace("'", "").split("+")
+        val mins = partsC.getOrNull(0)?.trim()?.toIntOrNull() ?: 0
+        val extra = partsC.getOrNull(1)?.trim()?.toIntOrNull()
+        return mins to extra
+    }
+
+    private fun translateCommentaryToZh(
+        rawText: String,
+        typeKey: String,
+        teamZh: String,
+        p1: String,
+        p2: String?,
+    ): String {
+        val lowText = rawText.lowercase()
+        val p1Zh = if (p1.isNotBlank()) TeamLocalization.localizePlayer(p1).first else ""
+        val p2Zh = if (!p2.isNullOrBlank()) TeamLocalization.localizePlayer(p2).first else ""
+        val teamTag = if (teamZh.isNotBlank()) "[$teamZh] " else ""
+        return when {
+            "lineups are announced" in lowText -> "📋 双方公布首发阵容，球员入场热身"
+            "first half begins" in lowText -> "📣 上半场哨响，比赛正式开始"
+            "second half begins" in lowText -> "📣 下半场开球，双方易边再战"
+            "first half ends" in lowText || "halftime" in lowText -> "⏱ 上半场结束，进入中场休息"
+            "match ends" in lowText || "second half ends" in lowText || "full time" in lowText -> "🏁 裁判吹响终场哨，全场比赛结束"
+            "own goal" in typeKey || "own goal" in lowText -> "⚽ ${teamTag}乌龙球！$p1Zh 不慎自摆乌龙"
+            "penalty" in typeKey && "goal" in lowText -> "⚽ ${teamTag}点球破门！$p1Zh 主罚稳稳命中"
+            "goal" in typeKey || lowText.startsWith("goal!") -> {
+                val ass = if (p2Zh.isNotBlank()) "（助攻：$p2Zh）" else ""
+                "⚽ ${teamTag}破门得分！$p1Zh 建功$ass"
+            }
+            "red" in typeKey || "red card" in lowText -> "🟥 ${teamTag}$p1Zh 被红牌直接罚下！"
+            "yellow" in typeKey || "yellow card" in lowText -> "🟨 ${teamTag}$p1Zh 犯规领到黄牌"
+            "substitution" in typeKey || "substitution" in lowText ->
+                "🔄 ${teamTag}战术换人：↑ $p1Zh 替补登场" + if (p2Zh.isNotBlank()) "，↓ 换下 $p2Zh" else ""
+            "shot-on-target" in typeKey || "attempt saved" in lowText -> "🎯 ${teamTag}$p1Zh 射门命中门框范围内被扑救"
+            "shot-off-target" in typeKey || "attempt missed" in lowText -> "💨 ${teamTag}$p1Zh 尝试射门偏出球门"
+            "shot-blocked" in typeKey || "attempt blocked" in lowText -> "🛡 ${teamTag}$p1Zh 射门被对方防线封堵"
+            "corner" in typeKey || lowText.startsWith("corner") -> "🚩 ${teamTag}赢得角球机会"
+            "offside" in typeKey || "offside" in lowText -> "⛳ ${teamTag}${p1Zh.ifBlank { "进攻队员" }}越位犯规"
+            "foul" in typeKey || "foul by" in lowText -> "📢 ${teamTag}${p1Zh.ifBlank { "球员" }}防守犯规"
+            "free kick" in lowText -> "📍 ${teamTag}${p1Zh.ifBlank { "球队" }}赢得任意球机会"
+            "var" in typeKey || "var" in lowText -> "📺 VAR 视频助理裁判介入核查"
+            else -> if (teamTag.isNotBlank() || p1Zh.isNotBlank()) "${teamTag}${p1Zh.ifBlank { rawText }}" else rawText
+        }
     }
 
     private fun formatStat(key: String, raw: String): String {
@@ -348,6 +464,28 @@ data class EspnSummaryResponse(
         return raw
     }
 }
+
+@Serializable
+data class EspnCommentaryItemDto(
+    val sequence: Int = 0,
+    val time: EspnClockDto? = null,
+    val text: String = "",
+    val play: EspnCommentaryPlayDto? = null,
+)
+
+@Serializable
+data class EspnCommentaryPlayDto(
+    val type: EspnCommentaryTypeDto? = null,
+    val clock: EspnClockDto? = null,
+    val team: EspnTeamStubDto? = null,
+    val participants: List<EspnParticipantDto> = emptyList(),
+)
+
+@Serializable
+data class EspnCommentaryTypeDto(
+    val text: String = "",
+    val type: String = "",
+)
 
 @Serializable
 data class EspnSummaryHeaderDto(

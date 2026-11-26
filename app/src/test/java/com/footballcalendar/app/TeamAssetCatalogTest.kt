@@ -1,9 +1,12 @@
 package com.footballcalendar.app
 
 import com.footballcalendar.app.data.remote.EspnLeagueCatalog
+import com.footballcalendar.app.data.remote.EspnSummaryResponse
+import com.footballcalendar.app.data.remote.WikidataSparqlResponse
 import com.footballcalendar.app.model.CompetitionCatalog
 import com.footballcalendar.app.util.TeamAssetCatalog
 import com.footballcalendar.app.util.TeamLocalization
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -90,5 +93,79 @@ class TeamAssetCatalogTest {
         assertTrue(TeamAssetCatalog.resolveTeamLogo("Norway").endsWith("/nor.png"))
         assertTrue(TeamAssetCatalog.resolveTeamLogo("埃及国家队").endsWith("/egy.png"))
         assertEquals("PL", CompetitionCatalog.findByNameOrAlias("English Premier League")?.code)
+    }
+
+    @Test
+    fun espnSummaryBackfillsEventsAndTranslatesCommentary() {
+        val parser = Json { ignoreUnknownKeys = true; isLenient = true }
+        val sampleJson = """
+            {
+              "header": {
+                "competitions": [{
+                  "status": {"displayClock": "90'+4'", "type": {"state": "post", "name": "STATUS_FULL_TIME"}},
+                  "competitors": [
+                    {"homeAway": "home", "score": "2", "team": {"id": "349", "displayName": "AFC Bournemouth"}},
+                    {"homeAway": "away", "score": "0", "team": {"id": "393", "displayName": "Nottingham Forest"}}
+                  ]
+                }]
+              },
+              "keyEvents": [{
+                "clock": {"displayValue": "19'"},
+                "type": {"text": "Goal - Regular"},
+                "team": {"id": "349", "displayName": "AFC Bournemouth"},
+                "participants": [
+                  {"athlete": {"displayName": "Evanilson"}},
+                  {"athlete": {"displayName": "James Hill"}}
+                ]
+              }],
+              "commentary": [
+                {
+                  "sequence": 1,
+                  "time": {"displayValue": "45'"},
+                  "text": "Substitution, Nottingham Forest. Igor Jesus replaces Dan Ndoye.",
+                  "play": {
+                    "type": {"type": "substitution", "text": "Substitution"},
+                    "clock": {"displayValue": "45'"},
+                    "team": {"id": "393", "displayName": "Nottingham Forest"},
+                    "participants": [
+                      {"athlete": {"displayName": "Igor Jesus"}},
+                      {"athlete": {"displayName": "Dan Ndoye"}}
+                    ]
+                  }
+                },
+                {
+                  "sequence": 2,
+                  "time": {"displayValue": "45'+3'"},
+                  "text": "Goal! Bournemouth 2, Nottingham Forest 0. Justin Kluivert scores.",
+                  "play": {
+                    "type": {"type": "goal", "text": "Goal"},
+                    "clock": {"displayValue": "45'+3'"},
+                    "team": {"id": "349", "displayName": "AFC Bournemouth"},
+                    "participants": [
+                      {"athlete": {"displayName": "Justin Kluivert"}},
+                      {"athlete": {"displayName": "Marcus Tavernier"}}
+                    ]
+                  }
+                }
+              ]
+            }
+        """.trimIndent()
+        val parsed = parser.decodeFromString(EspnSummaryResponse.serializer(), sampleJson)
+        val detail = parsed.toLiveDetail(matchId = "espn-765", eventId = "765")
+        assertEquals(3, detail.events.size)
+        val goal2 = detail.events.first { it.playerName == "Justin Kluivert" }
+        assertEquals(45, goal2.elapsed)
+        assertEquals(3, goal2.extra)
+        assertEquals("Goal", goal2.type)
+        val subEv = detail.events.first { it.type == "subst" }
+        assertEquals("Igor Jesus", subEv.playerName)
+        assertEquals("Dan Ndoye", subEv.assistName)
+        assertEquals(2, detail.commentary.size)
+        assertTrue(detail.commentary[0].textZh.contains("战术换人"))
+        assertTrue(detail.commentary[1].textZh.contains("破门得分"))
+
+        val wdSample = """{"results":{"bindings":[{"label":{"value":"Rodrigo Hernández Cascante"},"img":{"value":"http://commons.wikimedia.org/wiki/Special:FilePath/Rodri.jpg"}}]}}"""
+        val wd = parser.decodeFromString(WikidataSparqlResponse.serializer(), wdSample)
+        assertEquals(1, wd.results?.bindings?.size)
     }
 }

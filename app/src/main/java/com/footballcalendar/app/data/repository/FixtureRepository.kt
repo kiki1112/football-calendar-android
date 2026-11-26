@@ -24,14 +24,17 @@ import com.footballcalendar.app.util.MatchTimeFormatter
 import com.footballcalendar.app.util.ScheduleDiffEngine
 import com.footballcalendar.app.util.TeamAssetCatalog
 import com.footballcalendar.app.util.TeamLocalization
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
 import java.net.URLEncoder
+import java.text.Normalizer
 import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
@@ -57,6 +60,7 @@ class FixtureRepository(
     private val fetchedDirSlugs = Collections.synchronizedSet(mutableSetOf<String>())
     private val teamScheduleCache = ConcurrentHashMap<String, Pair<Long, List<MatchItem>>>()
     private val h2hCache = ConcurrentHashMap<String, Pair<Long, MatchH2HBundle>>()
+    private val teamDecodeCache = ConcurrentHashMap<String, Pair<Int, TeamDetailInfo>>()
     private val wikiPortraitCache = ConcurrentHashMap<String, String>().apply {
         TeamAssetCatalog.starPlayers.forEach { p ->
             if (p.portraitUrl.isNotBlank()) put(p.name.lowercase(), p.portraitUrl)
@@ -69,13 +73,29 @@ class FixtureRepository(
     fun getCachedH2H(matchId: String): MatchH2HBundle? = h2hCache[matchId]?.second
 
     fun observeAllMatches(): Flow<List<MatchItem>> =
-        matchDao.observeAllMatches().map { list -> list.map { it.toDomain() } }
+        matchDao.observeAllMatches()
+            .map { list -> list.map { it.toDomain() } }
+            .flowOn(Dispatchers.IO)
 
     fun observeAllStandings(): Flow<List<StandingEntry>> =
-        standingDao.observeAllStandings().map { list -> list.map { it.toDomain() } }
+        standingDao.observeAllStandings()
+            .map { list -> list.map { it.toDomain() } }
+            .flowOn(Dispatchers.IO)
 
     fun observeAllTeams(): Flow<List<TeamDetailInfo>> =
-        teamDao.observeAllTeams().map { list -> list.map { it.toDomain(json) } }
+        teamDao.observeAllTeams()
+            .map { list ->
+                list.map { te ->
+                    val sig = ((te.squadJson.hashCode() * 31) + te.espnTeamId.hashCode()) * 31 + te.crest.hashCode()
+                    val cached = teamDecodeCache[te.keyName]
+                    if (cached != null && cached.first == sig) {
+                        cached.second
+                    } else {
+                        te.toDomain(json).also { teamDecodeCache[te.keyName] = sig to it }
+                    }
+                }
+            }
+            .flowOn(Dispatchers.IO)
 
     suspend fun getAllMatchesOnce(): List<MatchItem> =
         matchDao.getAllMatchesOnce().map { it.toDomain() }
@@ -719,6 +739,58 @@ class FixtureRepository(
                 }
             }.forEach { deferred ->
                 result.putAll(deferred.await())
+            }
+        }
+        val missingForWikidata = toQuery.filter { !result.containsKey(it) && it.isNotBlank() }.take(40)
+        if (missingForWikidata.isNotEmpty()) {
+            result.putAll(fetchWikidataPortraitsBatch(missingForWikidata))
+        }
+        return result
+    }
+
+    private suspend fun fetchWikidataPortraitsBatch(names: List<String>): Map<String, String> {
+        val result = mutableMapOf<String, String>()
+        val variantToRaw = mutableMapOf<String, String>()
+        names.distinct().forEach { raw ->
+            val trimmed = raw.trim()
+            if (trimmed.length >= 2) {
+                variantToRaw[trimmed] = raw
+                val ascii = Normalizer.normalize(trimmed, Normalizer.Form.NFD)
+                    .replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
+                if (ascii != trimmed && ascii.length >= 2) {
+                    variantToRaw.putIfAbsent(ascii, raw)
+                }
+            }
+        }
+        val chunks = variantToRaw.keys.chunked(20).take(3)
+        for (chunk in chunks) {
+            val valuesClause = chunk.joinToString(" ") { v ->
+                val escaped = v.replace("\\", "\\\\").replace("\"", "\\\"")
+                "\"$escaped\"@en"
+            }
+            val sparql = "SELECT ?label ?img WHERE { VALUES ?label { $valuesClause } " +
+                "?item wdt:P106 wd:Q937857 ; wdt:P18 ?img . " +
+                "{ ?item rdfs:label ?label . } UNION { ?item skos:altLabel ?label . } }"
+            val encoded = URLEncoder.encode(sparql, "UTF-8")
+            val resp = runCatching {
+                apiService.fetchWikidataSparql("https://query.wikidata.org/sparql?query=$encoded&format=json")
+            }.getOrNull() ?: continue
+            resp.results?.bindings.orEmpty().forEach { row ->
+                val label = row["label"]?.value.orEmpty()
+                val rawImg = row["img"]?.value.orEmpty()
+                val rawName = variantToRaw[label] ?: return@forEach
+                if (rawImg.isNotBlank() && !result.containsKey(rawName)) {
+                    var httpsUrl = if (rawImg.startsWith("http://commons.wikimedia.org/")) {
+                        "https://" + rawImg.removePrefix("http://")
+                    } else {
+                        rawImg
+                    }
+                    if (httpsUrl.contains("Special:FilePath") && !httpsUrl.contains("?")) {
+                        httpsUrl += "?width=300"
+                    }
+                    wikiPortraitCache[rawName.lowercase()] = httpsUrl
+                    result[rawName] = httpsUrl
+                }
             }
         }
         return result
