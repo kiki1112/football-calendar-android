@@ -1,6 +1,7 @@
 package com.footballcalendar.app.data.repository
 
 import android.content.Context
+import android.util.Log
 import com.footballcalendar.app.data.local.MatchDao
 import com.footballcalendar.app.data.local.MatchEntity
 import com.footballcalendar.app.data.local.StandingDao
@@ -35,7 +36,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
+import java.io.BufferedInputStream
+import java.io.InputStream
 import java.net.URLEncoder
 import java.text.Normalizer
 import java.time.Duration
@@ -70,6 +75,8 @@ class FixtureRepository(
     private val emittedBroadcastKeys = Collections.synchronizedSet(mutableSetOf<String>())
     private var lastStandingsSignature: Int = 0
     private var lastTeamsSignature: Int = 0
+    private val seedMutex = Mutex()
+    private val syncMutex = Mutex()
     private val wikiPortraitCache = ConcurrentHashMap<String, String>().apply {
         TeamAssetCatalog.starPlayers.forEach { p ->
             if (p.portraitUrl.isNotBlank()) put(p.name.lowercase(), p.portraitUrl)
@@ -110,26 +117,45 @@ class FixtureRepository(
         matchDao.getAllMatchesOnce().map { it.toDomain() }
 
     suspend fun ensureSeededIfEmpty() {
-        val prefs = prefsRepo.currentPreferences()
-        val hasMatches = matchDao.getAllMatchesOnce().isNotEmpty()
-        val hasStandings = standingDao.getAllStandingsOnce().isNotEmpty()
-        if (!hasMatches || !hasStandings) {
-            seedFromBundledAsset(prefs.followedCompetitions, populateDb = true)
-            runCatching { syncFixtures() }
-        } else if (_starPlayers.value.size <= 25) {
-            // Fast 0ms warm-start hydration of ranked players & pre-cached match details from bundled snapshot
-            seedFromBundledAsset(prefs.followedCompetitions, populateDb = false)
+        var shouldRemoteSync = false
+        seedMutex.withLock {
+            val prefs = prefsRepo.currentPreferences()
+            val hasMatches = matchDao.getAllMatchesOnce().isNotEmpty()
+            val hasStandings = standingDao.getAllStandingsOnce().isNotEmpty()
+            val hasTeams = teamDao.getAllTeamsOnce().isNotEmpty()
+            if (!hasMatches || !hasStandings || !hasTeams) {
+                seedFromBundledAsset(prefs.followedCompetitions, prefs.dataSourceMode, populateDb = true)
+                shouldRemoteSync = true
+            } else if (_starPlayers.value.size <= 25) {
+                // Fast 0ms warm-start hydration of ranked players & pre-cached match details from bundled snapshot
+                seedFromBundledAsset(prefs.followedCompetitions, prefs.dataSourceMode, populateDb = false)
+            }
         }
+        if (shouldRemoteSync) {
+            runCatching { syncFixtures() }
+        }
+    }
+
+    private fun readBundledSeedRawText(): String {
+        val candidates = listOf("seed_fixtures.json", "seed_fixtures.json.gz")
+        var lastError: Throwable? = null
+        for (assetName in candidates) {
+            try {
+                return appContext.assets.open(assetName).use { decodeSeedStream(it) }
+            } catch (err: Throwable) {
+                lastError = err
+            }
+        }
+        throw lastError ?: IllegalStateException("Bundled seed asset not found")
     }
 
     private suspend fun seedFromBundledAsset(
         followedCompetitions: Set<String>,
+        sourceMode: DataSourceMode,
         populateDb: Boolean,
     ) {
         runCatching {
-            val rawText = appContext.assets.open("seed_fixtures.json.gz").use { stream ->
-                GZIPInputStream(stream).bufferedReader(Charsets.UTF_8).readText()
-            }
+            val rawText = readBundledSeedRawText()
             val parsed = json.decodeFromString(GitHubFeedResponse.serializer(), rawText)
             val payload = parsed.toSyncPayload(followedCompetitions)
             if (payload.players.isNotEmpty()) {
@@ -164,12 +190,25 @@ class FixtureRepository(
                 if (payload.teams.isNotEmpty()) {
                     teamDao.replaceAll(payload.teams.map { TeamEntity.fromDomain(it, json) })
                 }
+                if (prefsRepo.currentPreferences().lastSyncUtc.isBlank()) {
+                    val stamp = parsed.generatedAtUtc.ifBlank {
+                        DateTimeFormatter.ISO_INSTANT.format(Instant.now())
+                    }
+                    prefsRepo.recordSyncResult(
+                        syncedAtUtc = stamp,
+                        summary = "已加载 ${payload.matches.size} 场赛事快照",
+                        sourceMode = sourceMode,
+                        standingsSyncedAtMillis = System.currentTimeMillis(),
+                    )
+                }
             }
+        }.onFailure { err ->
+            Log.e("FixtureRepository", "seedFromBundledAsset failed (populateDb=$populateDb)", err)
         }
     }
 
     suspend fun syncFixtures(zoneId: ZoneId = ZoneId.systemDefault()): Result<SyncSummary> {
-        return runCatching {
+        return runCatching { syncMutex.withLock {
             val prefs = prefsRepo.currentPreferences()
             val modeChanged = prefs.lastSyncedMode.isNotBlank() &&
                 prefs.lastSyncedMode != prefs.dataSourceMode.name
@@ -257,7 +296,7 @@ class FixtureRepository(
                 sourceMode = prefs.dataSourceMode,
                 message = summaryText,
             )
-        }
+        } }
     }
 
     /**
@@ -266,6 +305,7 @@ class FixtureRepository(
      */
     suspend fun pollLiveUpdatesWithBroadcasts(): Result<List<LiveBroadcastAlert>> {
         return runCatching {
+            if (syncMutex.isLocked) return@runCatching emptyList()
             val prefs = prefsRepo.currentPreferences()
             if (prefs.dataSourceMode == DataSourceMode.DEMO) return@runCatching emptyList()
 
@@ -1349,6 +1389,26 @@ class FixtureRepository(
             )
             _starPlayers.value = (_starPlayers.value + created).distinctBy { it.id }
             created
+        }
+    }
+
+    companion object {
+        /**
+         * Decodes either a gzip-compressed seed asset stream or an already-decompressed
+         * UTF-8 JSON stream (which Android AAPT2 produces when stripping `.gz` during packaging).
+         */
+        internal fun decodeSeedStream(input: InputStream): String {
+            val buffered = BufferedInputStream(input, 8192)
+            buffered.mark(2)
+            val b0 = buffered.read()
+            val b1 = buffered.read()
+            buffered.reset()
+            val stream: InputStream = if (b0 == 0x1f && b1 == 0x8b) {
+                GZIPInputStream(buffered)
+            } else {
+                buffered
+            }
+            return stream.bufferedReader(Charsets.UTF_8).use { it.readText() }
         }
     }
 }

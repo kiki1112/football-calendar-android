@@ -14,8 +14,8 @@ android {
         applicationId = "com.footballcalendar.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "2.6.0"
+        versionCode = 10
+        versionName = "2.6.1"
 
         val builtInFootballDataKey = ((project.findProperty("FOOTBALL_DATA_API_KEY") as? String)
             ?: System.getenv("FOOTBALL_DATA_API_KEY") ?: "").replace("\\", "\\\\").replace("\"", "\\\"")

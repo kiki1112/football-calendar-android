@@ -1,4 +1,4 @@
-name: Capture Real Emulator Screenshots (v2.6.0)
+name: Capture Real Emulator Screenshots (v2.6.1)
 
 on:
   push:
@@ -6,6 +6,7 @@ on:
     paths:
       - ".github/workflows/capture-screenshots.yml"
       - ".github/scripts/capture_screens.py"
+      - "app/**"
   workflow_dispatch:
 
 permissions:
@@ -14,7 +15,7 @@ permissions:
 jobs:
   capture:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - name: Checkout Repository
@@ -26,10 +27,18 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Download v2.6.0 APK
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Run Unit Tests & Build Fixed Debug APK
+        env:
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
         run: |
-          curl -fsSL --retry 3 -o app-debug.apk \
-            "https://github.com/kiki1112/football-calendar-android/releases/download/v2.6.0/app-debug.apk"
+          gradle testDebugUnitTest assembleDebug --stacktrace
+          cp app/build/outputs/apk/debug/app-debug.apk app-debug.apk
           ls -lh app-debug.apk
 
       - name: Enable KVM for hardware acceleration
@@ -56,24 +65,24 @@ jobs:
             -camera-front none
           script: python3 .github/scripts/capture_screens.py --apk app-debug.apk --out screenshots
 
-      - name: Package Screenshots Archive
+      - name: Package Screenshots & Diagnostics Archive
         run: |
           ls -lh screenshots/
-          zip -j v2.6.0-screenshots.zip screenshots/*.png
+          zip -j v2.6.1-screenshots.zip screenshots/*.png
 
       - name: Upload Screenshots Workflow Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: v2.6.0-screenshots
-          path: screenshots/*.png
+          name: v2.6.1-screenshots
+          path: screenshots/
 
       - name: Publish Screenshots Asset for Verification
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete screenshots-v2.6.0 --yes || true
-          git push origin :refs/tags/screenshots-v2.6.0 || true
-          gh release create screenshots-v2.6.0 v2.6.0-screenshots.zip \
+          gh release delete screenshots-v2.6.1 --yes || true
+          git push origin :refs/tags/screenshots-v2.6.1 || true
+          gh release create screenshots-v2.6.1 v2.6.1-screenshots.zip \
             --prerelease \
-            --title "Football Calendar v2.6.0 Screenshots" \
-            --notes "Automated real Android 14 Pixel 6 emulator screenshots of v2.6.0."
+            --title "Football Calendar v2.6.1 Screenshots" \
+            --notes "Automated real Android 14 Pixel 6 emulator screenshots of v2.6.1."
