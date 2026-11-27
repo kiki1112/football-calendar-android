@@ -1,0 +1,79 @@
+name: Capture Real Emulator Screenshots (v2.6.0)
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/capture-screenshots.yml"
+      - ".github/scripts/capture_screens.py"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Download v2.6.0 APK
+        run: |
+          curl -fsSL --retry 3 -o app-debug.apk \
+            "https://github.com/kiki1112/football-calendar-android/releases/download/v2.6.0/app-debug.apk"
+          ls -lh app-debug.apk
+
+      - name: Enable KVM for hardware acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -la /dev/kvm || true
+
+      - name: Run Headless Pixel 6 Emulator & Capture All Screens
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: >-
+            -no-window
+            -gpu swiftshader_indirect
+            -noaudio
+            -no-boot-anim
+            -camera-back none
+            -camera-front none
+          script: python3 .github/scripts/capture_screens.py --apk app-debug.apk --out screenshots
+
+      - name: Package Screenshots Archive
+        run: |
+          ls -lh screenshots/
+          zip -j v2.6.0-screenshots.zip screenshots/*.png
+
+      - name: Upload Screenshots Workflow Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2.6.0-screenshots
+          path: screenshots/*.png
+
+      - name: Publish Screenshots Asset for Verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete screenshots-v2.6.0 --yes || true
+          git push origin :refs/tags/screenshots-v2.6.0 || true
+          gh release create screenshots-v2.6.0 v2.6.0-screenshots.zip \
+            --prerelease \
+            --title "Football Calendar v2.6.0 Screenshots" \
+            --notes "Automated real Android 14 Pixel 6 emulator screenshots of v2.6.0."
