@@ -3,9 +3,9 @@
     "version": "1.0.0",
     "design_scheme": "Scheme C - Apple Sports x iOS 26 Liquid Glass Dynamic Team-Chroma",
     "fallback": {
-      "primaryHex": "#1D4ED8",
-      "secondaryHex": "#1E3A8A",
-      "accentStripeHex": "#1D4ED8"
+      "primaryHex": "#C8102E",
+      "secondaryHex": "#960B22",
+      "accentStripeHex": "#C8102E"
     },
     "contrast_note": "All primaryHex values are calibrated for crisp white (#FFFFFF) score typography on the match detail hero gradient."
   },

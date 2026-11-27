@@ -25,14 +25,14 @@
 | `InkSecondary` | `#475569` | 联赛名、副标题、英文队名、次要说明 |
 | `InkMuted` | `#64748B` | 表头、时间戳、占位辅助文 |
 | `Hairline` | `#E2E8F0` | 1dp 极细分割线（优先用留白代替边框） |
-| `AccentFallback` | `#1D4ED8` | 默认皇家蓝主色（选中日期、未收录球队的兜底渐变色） |
+| `AccentFallback` | `#C8102E` | 默认品牌运动红主色（选中日期、交互高光与未收录球队兜底渐变色） |
 | `LivePulse` | `#E11D48` | 进行中比赛脉冲圆点、直播分钟胶囊（`78'`） |
 | `LotteryGold` | `#B45309` | 体彩模式专属竞彩编号与让球标示文字色（配 `#FEF3C7` 浅底） |
 | `SuccessEmerald` | `#059669` | 欧冠直通区指示条、主队胜率/正净胜球高亮 |
 
 ### 2.2 动态球队主色系统（`TeamColorRegistry`）
 - 维护本地 JSON 映射表（主流五大联赛、欧冠、中超、国家队约 120 支核心球队的官方主色 Hex，如阿森纳 `#991B1B`、曼城 `#0284C7`、皇马 `#1E3A8A`、巴萨 `#9F1239`、利物浦 `#B91C1C`、切尔西 `#1D4ED8`）。
-- **兜底机制**：未收录球队使用队徽图像提取主色（`Palette` API 并限制亮度在 `0.25–0.45` 确保白色比分 AAA 对比度），若队徽加载失败则安全降级为 `AccentFallback (#1D4ED8)`。
+- **兜底机制**：未收录球队使用队徽图像提取主色（`Palette` API 并限制亮度在 `0.25–0.45` 确保白色比分 AAA 对比度），若队徽加载失败则安全降级为 `AccentFallback (#C8102E)`。
 - **双色渐变规则**：比赛详情页顶部 220dp 区域绘制主队色（左上）向客队色（右上）平滑过渡的 Mesh/Linear 渐变，底部 64dp 使用 [Compose 1.13 Progressive Blur](https://developer.android.com/blog/posts/jetpack-compose-november-2026-release)（`Modifier.blur` + `BlurRadiusSpec`）无缝羽化融入下方 `#FFFFFF` 内容区。
 
 ### 2.3 排版与等宽数字规范

@@ -18,10 +18,10 @@ object ThemeTokens {
     val InkMuted = Color(0xFF64748B)
     val Hairline = Color(0xFFE2E8F0)
 
-    val AccentFallback = Color(0xFF1D4ED8)
-    val AccentDeep = Color(0xFF1E3A8A)
-    val AccentSoftBg = Color(0xFFEFF6FF)
-    val AccentSoftBorder = Color(0xFFBFDBFE)
+    val AccentFallback = Color(0xFFC8102E)
+    val AccentDeep = Color(0xFF960B22)
+    val AccentSoftBg = Color(0xFFFDF2F4)
+    val AccentSoftBorder = Color(0xFFF9CBD3)
 
     val LivePulse = Color(0xFFE11D48)
     val LivePulseDeep = Color(0xFFBE123C)
@@ -56,6 +56,7 @@ object ThemeTokens {
     // Pitch & Standings Semantic Tokens
     val PitchGrass = Color(0xFF2E8D3F)
     val PitchGrassStripe = Color(0xFF359A46)
+    val ZoneUcl = Color(0xFF1D4ED8)
     val ZonePurple = Color(0xFF7C3AED)
     val ZoneOrange = Color(0xFFEA580C)
     val ZoneCyan = Color(0xFF0284C7)

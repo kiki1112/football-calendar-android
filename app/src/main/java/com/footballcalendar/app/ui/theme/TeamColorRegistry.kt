@@ -22,9 +22,9 @@ data class TeamColorMetaDto(
 
 @Serializable
 data class TeamColorFallbackDto(
-    val primaryHex: String = "#1D4ED8",
-    val secondaryHex: String = "#1E3A8A",
-    val accentStripeHex: String = "#1D4ED8",
+    val primaryHex: String = "#C8102E",
+    val secondaryHex: String = "#960B22",
+    val accentStripeHex: String = "#C8102E",
 )
 
 @Serializable
@@ -33,9 +33,9 @@ data class TeamColorEntryDto(
     val shortZh: String = "",
     val enName: String = "",
     val league: String = "",
-    val primaryHex: String = "#1D4ED8",
-    val secondaryHex: String = "#1E3A8A",
-    val accentStripeHex: String = "#1D4ED8",
+    val primaryHex: String = "#C8102E",
+    val secondaryHex: String = "#960B22",
+    val accentStripeHex: String = "#C8102E",
 )
 
 data class TeamColorScheme(
@@ -46,7 +46,7 @@ data class TeamColorScheme(
 
 /**
  * Registry of calibrated club and national team colors loaded from `team_colors.json`,
- * falling back to [ThemeTokens.AccentFallback] (#1D4ED8) for uncatalogued teams.
+ * falling back to [ThemeTokens.AccentFallback] (#C8102E) for uncatalogued teams.
  */
 object TeamColorRegistry {
     private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }

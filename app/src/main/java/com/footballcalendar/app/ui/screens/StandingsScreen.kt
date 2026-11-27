@@ -79,7 +79,7 @@ import com.footballcalendar.app.ui.theme.ThemeTokens
 import com.footballcalendar.app.util.MatchTimeFormatter
 
 private fun colorForZone(zoneType: String): Color = when (zoneType) {
-    "UCL" -> ThemeTokens.AccentFallback
+    "UCL" -> ThemeTokens.ZoneUcl
     "UCL_QUAL" -> ThemeTokens.ZoneCyan
     "PROMOTION" -> ThemeTokens.SuccessEmerald
     "UEL" -> ThemeTokens.LotteryGold
