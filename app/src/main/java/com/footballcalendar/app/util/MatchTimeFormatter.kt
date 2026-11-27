@@ -14,6 +14,7 @@ object MatchTimeFormatter {
 
     private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm", Locale.CHINA)
     private val monthDayTimeFormatter = DateTimeFormatter.ofPattern("MM-dd HH:mm", Locale.CHINA)
+    private val dateKeyFormatter = DateTimeFormatter.ISO_LOCAL_DATE
     private val yearMonthFormatter = DateTimeFormatter.ofPattern("yyyy年M月", Locale.CHINA)
     private val dateTitleFormatter = DateTimeFormatter.ofPattern("M月d日 EEEE", Locale.CHINA)
 
@@ -62,6 +63,18 @@ object MatchTimeFormatter {
         return monthDayTimeFormatter.format(localDt)
     }
 
+    fun formatMonthDayTime(instant: Instant, zoneId: ZoneId = BEIJING_ZONE): String =
+        monthDayTimeFormatter.format(instant.atZone(zoneId))
+
+    fun dateKeyFor(
+        utcIso: String,
+        zoneId: ZoneId = BEIJING_ZONE,
+        watchNightGrouping: Boolean = true,
+    ): String {
+        val d = displayDateFor(utcIso, zoneId, watchNightGrouping) ?: return ""
+        return dateKeyFormatter.format(d)
+    }
+
     fun formatYearMonth(date: LocalDate): String = yearMonthFormatter.format(date)
 
     fun formatDateTitle(date: LocalDate): String = dateTitleFormatter.format(date)
@@ -75,8 +88,7 @@ object MatchTimeFormatter {
         val diff = Duration.between(now, kickoff)
         val minutes = diff.toMinutes()
         return when {
-            minutes in -115..0 -> "进行窗口"
-            minutes < -115 -> "已结束"
+            minutes <= 0 -> "待开球"
             minutes < 60 -> "${minutes}分钟后开球"
             minutes < 24 * 60 -> "${minutes / 60}小时${minutes % 60}分后"
             else -> formatMonthDayTime(utcIso, zoneId)

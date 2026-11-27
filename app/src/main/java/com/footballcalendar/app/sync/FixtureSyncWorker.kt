@@ -59,7 +59,7 @@ class FixtureSyncWorker(
             val windowMinutes = prefs.notifyBeforeMatchMinutes.toLong() + 30L
 
             for (match in allMatches) {
-                if (match.status.isCancelledOrPostponed || match.id in prefs.notifiedMatchIds) continue
+                if (match.phase.isPostponed || match.phase.isFinished || match.id in prefs.notifiedMatchIds) continue
                 val interested = if (prefs.favoriteTeams.isNotEmpty()) {
                     match.involvesAnyTeam(prefs.favoriteTeams)
                 } else {

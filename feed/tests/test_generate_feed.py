@@ -248,6 +248,28 @@ class GenerateFeedTest(unittest.TestCase):
         self.assertEqual(nm.espnSlug, "eng.1")
         self.assertEqual(nm.homeTeamZhName, "利物浦")
 
+    def test_active_af_coach_selection_and_zh_entities_lookup(self) -> None:
+        coaches = [
+            {
+                "id": 18,
+                "name": "José Mourinho",
+                "photo": "old.png",
+                "career": [{"team": {"id": 541, "name": "Real Madrid"}, "start": "2010-05-01", "end": "2013-06-01"}],
+            },
+            {
+                "id": 24,
+                "name": "Carlo Ancelotti",
+                "photo": "active.png",
+                "career": [{"team": {"id": 541, "name": "Real Madrid"}, "start": "2021-06-01", "end": None}],
+            },
+        ]
+        picked = gf._select_active_af_coach(coaches, 541)
+        self.assertIsNotNone(picked)
+        assert picked is not None
+        self.assertEqual(picked["name"], "Carlo Ancelotti")
+        self.assertEqual(loc.localize_coach("José Mourinho"), "穆里尼奥")
+        self.assertEqual(loc.localize_coach("Carlo Ancelotti"), "安切洛蒂")
+
 
 if __name__ == "__main__":
     unittest.main()

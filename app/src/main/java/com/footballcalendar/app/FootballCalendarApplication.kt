@@ -16,6 +16,8 @@ import com.footballcalendar.app.data.remote.MockFixtureDataSource
 import com.footballcalendar.app.data.repository.FixtureRepository
 import com.footballcalendar.app.sync.NotificationHelper
 import com.footballcalendar.app.sync.SyncScheduler
+import com.footballcalendar.app.ui.theme.TeamColorRegistry
+import com.footballcalendar.app.util.ZhEntityDictionary
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -96,6 +98,8 @@ class AppContainer(application: Application) {
         matchDao = database.matchDao(),
         standingDao = database.standingDao(),
         teamDao = database.teamDao(),
+        matchDetailDao = database.matchDetailDao(),
+        playerDao = database.playerDao(),
         prefsRepo = prefsRepository,
         dataSource = fixtureDataSource,
         apiService = apiService,
@@ -111,6 +115,8 @@ class FootballCalendarApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        TeamColorRegistry.ensureLoaded(this)
+        ZhEntityDictionary.ensureLoaded(this)
         container = AppContainer(this)
         container.notificationHelper.ensureChannels()
 

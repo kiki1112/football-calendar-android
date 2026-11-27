@@ -7,12 +7,15 @@ import com.footballcalendar.app.model.MatchCommentaryItem
 import com.footballcalendar.app.model.MatchEventItem
 import com.footballcalendar.app.model.MatchItem
 import com.footballcalendar.app.model.MatchLineupSide
+import com.footballcalendar.app.model.MatchPhaseResolver
 import com.footballcalendar.app.model.MatchStatPair
 import com.footballcalendar.app.model.MatchStatus
 import com.footballcalendar.app.model.SquadMember
 import com.footballcalendar.app.model.StandingEntry
 import com.footballcalendar.app.model.StarPlayer
 import com.footballcalendar.app.model.TeamDetailInfo
+import com.footballcalendar.app.util.LineupSanitizer
+import com.footballcalendar.app.util.MatchFinalizationPolicy
 import com.footballcalendar.app.util.TeamAssetCatalog
 import com.footballcalendar.app.util.TeamLocalization
 import kotlinx.serialization.SerialName
@@ -30,7 +33,7 @@ data class GitHubFeedResponse(
     val liveDetails: Map<String, GitHubFeedLiveDetailDto> = emptyMap(),
 ) {
     fun toDomainMatches(followedCompetitions: Set<String>): List<MatchItem> = matches
-        .map { it.toDomain() }
+        .map { it.toDomain(hasLocalSnapshot = it.id in liveDetails) }
         .filter { followedCompetitions.isEmpty() || it.competitionCode in followedCompetitions }
 
     fun toDomainStandings(): List<StandingEntry> {
@@ -101,35 +104,37 @@ data class GitHubFeedLiveDetailDto(
             )
         },
         lineups = lineups.map { l ->
+            val rawStarters = l.startXI.map { s ->
+                LineupPlayerItem(
+                    name = s.name,
+                    zhName = s.zhName.ifBlank { TeamLocalization.localizePlayer(s.name).first },
+                    number = s.number,
+                    pos = s.pos,
+                    portraitUrl = s.portraitUrl,
+                    formationPlace = s.formationPlace,
+                    goals = s.goals,
+                    assists = s.assists,
+                    yellowCards = s.yellowCards,
+                    redCards = s.redCards,
+                    shots = s.shots,
+                    shotsOnTarget = s.shotsOnTarget,
+                    passes = s.passes,
+                    tackles = s.tackles,
+                    saves = s.saves,
+                    foulsCommitted = s.foulsCommitted,
+                    subbedIn = s.subbedIn,
+                    subbedOut = s.subbedOut,
+                    rating = s.rating,
+                    playerId = s.playerId,
+                )
+            }
             MatchLineupSide(
                 teamName = l.teamName,
                 teamZhName = TeamLocalization.preferChinese(l.teamName, l.teamZhName),
                 formation = l.formation,
                 coachName = l.coachName,
-                coachZhName = l.coachZhName.ifBlank { TeamLocalization.localizeCoach(l.coachName) },
-                startXI = l.startXI.map { s ->
-                    LineupPlayerItem(
-                        name = s.name,
-                        zhName = s.zhName.ifBlank { TeamLocalization.localizePlayer(s.name).first },
-                        number = s.number,
-                        pos = s.pos,
-                        portraitUrl = s.portraitUrl,
-                        formationPlace = s.formationPlace,
-                        goals = s.goals,
-                        assists = s.assists,
-                        yellowCards = s.yellowCards,
-                        redCards = s.redCards,
-                        shots = s.shots,
-                        shotsOnTarget = s.shotsOnTarget,
-                        passes = s.passes,
-                        tackles = s.tackles,
-                        saves = s.saves,
-                        foulsCommitted = s.foulsCommitted,
-                        subbedIn = s.subbedIn,
-                        subbedOut = s.subbedOut,
-                        rating = s.rating,
-                    )
-                },
+                coachZhName = TeamLocalization.preferChineseCoach(l.coachName, l.coachZhName),
+                startXI = LineupSanitizer.dedupeStarters(rawStarters),
                 substitutes = l.substitutes.map { s ->
                     LineupPlayerItem(
                         name = s.name,
@@ -151,6 +156,7 @@ data class GitHubFeedLiveDetailDto(
                         subbedIn = s.subbedIn,
                         subbedOut = s.subbedOut,
                         rating = s.rating,
+                        playerId = s.playerId,
                     )
                 },
                 coachPortraitUrl = l.coachPortraitUrl,
@@ -220,6 +226,7 @@ data class GitHubFeedEventDto(
 
 @Serializable
 data class GitHubFeedLineupPlayerDto(
+    val playerId: String = "",
     val name: String = "",
     val zhName: String = "",
     val number: Int = 0,
@@ -289,35 +296,54 @@ data class GitHubFeedMatchDto(
     val apiFootballFixtureId: Int? = null,
     val espnSlug: String? = null,
     val espnEventId: String? = null,
+    val lotteryCode: String? = null,
+    val lotteryHandicap: Int? = null,
+    val lotteryDeadlineUtc: Long? = null,
+    val isFinalized: Boolean = false,
 ) {
-    fun toDomain(): MatchItem = MatchItem(
-        id = id,
-        competitionCode = competitionCode,
-        competitionName = competitionName.ifBlank { competitionCode },
-        competitionZhName = TeamLocalization.localizeCompetition(competitionCode, competitionZhName.ifBlank { competitionName }),
-        matchday = matchday,
-        stage = stage,
-        utcDate = utcDate,
-        status = MatchStatus.fromRaw(status),
-        homeTeamId = homeTeamId,
-        homeTeamName = homeTeamName,
-        homeTeamShortName = homeTeamShortName.ifBlank { homeTeamName },
-        homeTeamZhName = TeamLocalization.preferChinese(homeTeamName, homeTeamZhName),
-        awayTeamId = awayTeamId,
-        awayTeamName = awayTeamName,
-        awayTeamShortName = awayTeamShortName.ifBlank { awayTeamName },
-        awayTeamZhName = TeamLocalization.preferChinese(awayTeamName, awayTeamZhName),
-        homeScore = homeScore,
-        awayScore = awayScore,
-        venue = venue,
-        lastUpdatedUtc = lastUpdatedUtc.ifBlank { utcDate },
-        homeTeamCrest = TeamAssetCatalog.resolveTeamLogo(homeTeamName, homeTeamCrest),
-        awayTeamCrest = TeamAssetCatalog.resolveTeamLogo(awayTeamName, awayTeamCrest),
-        elapsedMinutes = elapsedMinutes,
-        apiFootballFixtureId = apiFootballFixtureId,
-        espnSlug = espnSlug,
-        espnEventId = espnEventId,
-    )
+    fun toDomain(hasLocalSnapshot: Boolean = false): MatchItem {
+        val statusEnum = MatchStatus.fromRaw(status)
+        val phase = MatchPhaseResolver.resolve(statusEnum, utcDate, elapsedMinutes)
+        val finalized = MatchFinalizationPolicy.isFinalized(
+            phase = phase,
+            utcDate = utcDate,
+            elapsedMinutes = elapsedMinutes,
+            hasLocalSnapshot = hasLocalSnapshot,
+            alreadyFinalized = isFinalized,
+        )
+        return MatchItem(
+            id = id,
+            competitionCode = competitionCode,
+            competitionName = competitionName.ifBlank { competitionCode },
+            competitionZhName = TeamLocalization.localizeCompetition(competitionCode, competitionZhName.ifBlank { competitionName }),
+            matchday = matchday,
+            stage = stage,
+            utcDate = utcDate,
+            status = statusEnum,
+            homeTeamId = homeTeamId,
+            homeTeamName = homeTeamName,
+            homeTeamShortName = homeTeamShortName.ifBlank { homeTeamName },
+            homeTeamZhName = TeamLocalization.preferChinese(homeTeamName, homeTeamZhName),
+            awayTeamId = awayTeamId,
+            awayTeamName = awayTeamName,
+            awayTeamShortName = awayTeamShortName.ifBlank { awayTeamName },
+            awayTeamZhName = TeamLocalization.preferChinese(awayTeamName, awayTeamZhName),
+            homeScore = homeScore,
+            awayScore = awayScore,
+            venue = venue,
+            lastUpdatedUtc = lastUpdatedUtc.ifBlank { utcDate },
+            homeTeamCrest = TeamAssetCatalog.resolveTeamLogo(homeTeamName, homeTeamCrest),
+            awayTeamCrest = TeamAssetCatalog.resolveTeamLogo(awayTeamName, awayTeamCrest),
+            elapsedMinutes = elapsedMinutes,
+            apiFootballFixtureId = apiFootballFixtureId,
+            espnSlug = espnSlug,
+            espnEventId = espnEventId,
+            lotteryCode = lotteryCode,
+            lotteryHandicap = lotteryHandicap,
+            lotteryDeadlineUtc = lotteryDeadlineUtc,
+            isFinalized = finalized,
+        )
+    }
 }
 
 @Serializable
@@ -464,7 +490,7 @@ data class GitHubFeedTeamDto(
         founded = founded,
         clubColors = clubColors,
         coachName = coachName,
-        coachZhName = coachZhName.ifBlank { TeamLocalization.localizeCoach(coachName) },
+        coachZhName = TeamLocalization.preferChineseCoach(coachName, coachZhName),
         coachNationality = coachNationality,
         squad = squad.map { m ->
             val (pZh, tr) = if (m.zhName.isNotBlank() && TeamLocalization.containsCjk(m.zhName)) {
@@ -775,15 +801,18 @@ data class ApiFootballFixtureItemDto(
                 formation = l.formation ?: "",
                 coachName = cName,
                 coachZhName = TeamLocalization.localizeCoach(cName),
-                startXI = l.startXI.orEmpty().mapNotNull { slot ->
-                    val pn = slot.player?.name?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                    LineupPlayerItem(
-                        name = pn,
-                        zhName = TeamLocalization.localizePlayer(pn).first,
-                        number = slot.player.number ?: 0,
-                        pos = slot.player.pos ?: "",
-                    )
-                },
+                startXI = LineupSanitizer.dedupeStarters(
+                    l.startXI.orEmpty().mapNotNull { slot ->
+                        val pn = slot.player?.name?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                        LineupPlayerItem(
+                            name = pn,
+                            zhName = TeamLocalization.localizePlayer(pn).first,
+                            number = slot.player.number ?: 0,
+                            pos = slot.player.pos ?: "",
+                            playerId = slot.player.id?.takeIf { it > 0 }?.let { "afp-$it" } ?: "",
+                        )
+                    },
+                ),
                 substitutes = l.substitutes.orEmpty().mapNotNull { slot ->
                     val pn = slot.player?.name?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
                     LineupPlayerItem(
@@ -791,6 +820,7 @@ data class ApiFootballFixtureItemDto(
                         zhName = TeamLocalization.localizePlayer(pn).first,
                         number = slot.player.number ?: 0,
                         pos = slot.player.pos ?: "",
+                        playerId = slot.player.id?.takeIf { it > 0 }?.let { "afp-$it" } ?: "",
                     )
                 },
             )
@@ -1019,7 +1049,22 @@ data class ApiFootballTeamExtraDto(
 
 @Serializable
 data class ApiFootballCoachesResponse(
-    val response: List<ApiFootballNamedIdDto> = emptyList(),
+    val response: List<ApiFootballCoachDto> = emptyList(),
+)
+
+@Serializable
+data class ApiFootballCoachDto(
+    val id: Int? = null,
+    val name: String? = null,
+    val photo: String? = null,
+    val career: List<ApiFootballCoachCareerDto> = emptyList(),
+)
+
+@Serializable
+data class ApiFootballCoachCareerDto(
+    val team: ApiFootballNamedIdDto? = null,
+    val start: String? = null,
+    val end: String? = null,
 )
 
 @Serializable

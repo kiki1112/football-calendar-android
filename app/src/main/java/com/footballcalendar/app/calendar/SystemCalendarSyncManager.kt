@@ -10,6 +10,7 @@ import android.net.Uri
 import android.provider.CalendarContract
 import androidx.core.content.ContextCompat
 import com.footballcalendar.app.model.MatchItem
+import com.footballcalendar.app.util.MatchPhaseFormatter
 import com.footballcalendar.app.util.MatchTimeFormatter
 import java.time.Instant
 import java.util.TimeZone
@@ -33,7 +34,8 @@ class SystemCalendarSyncManager(private val context: Context) {
             ?: System.currentTimeMillis()
         val endMillis = startMillis + MATCH_DURATION_MILLIS
         val title = "[${match.competitionZhName}] ${match.homeTeamZhName} vs ${match.awayTeamZhName}"
-        val desc = "联赛: ${match.competitionZhName} (${match.competitionName})\n状态: ${match.status.zhLabel}\n[FCID:${match.id}]"
+        val phaseLabel = MatchPhaseFormatter.formatLabels(match.phase).topBadgeText
+        val desc = "联赛: ${match.competitionZhName} (${match.competitionName})\n状态: $phaseLabel\n[FCID:${match.id}]"
         return Intent(Intent.ACTION_INSERT).apply {
             data = CalendarContract.Events.CONTENT_URI
             putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, startMillis)
@@ -52,7 +54,7 @@ class SystemCalendarSyncManager(private val context: Context) {
 
         val now = Instant.now().minusSeconds(6 * 3600)
         val activeMatches = matches.filter { m ->
-            !m.status.isCancelledOrPostponed &&
+            !m.phase.isPostponed &&
                 (MatchTimeFormatter.parseInstant(m.utcDate)?.isAfter(now) == true)
         }
         val activeById = activeMatches.associateBy { it.id }
@@ -74,7 +76,8 @@ class SystemCalendarSyncManager(private val context: Context) {
             val startMillis = MatchTimeFormatter.parseInstant(match.utcDate)?.toEpochMilli() ?: continue
             val endMillis = startMillis + MATCH_DURATION_MILLIS
             val title = "[${match.competitionZhName}] ${match.homeTeamZhName} vs ${match.awayTeamZhName}"
-            val desc = "联赛: ${match.competitionZhName} (${match.competitionName})\n状态: ${match.status.zhLabel}\n[FCID:${match.id}]"
+            val phaseLabel = MatchPhaseFormatter.formatLabels(match.phase).topBadgeText
+            val desc = "联赛: ${match.competitionZhName} (${match.competitionName})\n状态: $phaseLabel\n[FCID:${match.id}]"
 
             val values = ContentValues().apply {
                 put(CalendarContract.Events.CALENDAR_ID, calendarId)

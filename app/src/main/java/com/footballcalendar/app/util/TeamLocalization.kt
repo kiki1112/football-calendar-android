@@ -552,6 +552,10 @@ object TeamLocalization {
 
     fun localizeTeam(fullName: String, shortName: String? = null): String {
         if (containsCjk(fullName)) return fullName
+        ZhEntityDictionary.findTeam(fullName)?.let { return it.zhName }
+        if (!shortName.isNullOrBlank()) {
+            ZhEntityDictionary.findTeam(shortName)?.let { return it.zhName }
+        }
         val youthMatch = Regex("^(.*?)\\s+(U17|U19|U20|U21|U23)(?:\\s+.*)?$", RegexOption.IGNORE_CASE)
             .find(fullName.trim())
         if (youthMatch != null) {
@@ -575,18 +579,48 @@ object TeamLocalization {
         val cleaned = rawName.trim()
         if (cleaned.isEmpty()) return "" to false
         if (containsCjk(cleaned)) return cleaned to false
+        ZhEntityDictionary.findPlayer(cleaned)?.let { return it.zhName to false }
         playerZhMap[cleaned]?.let { return it to false }
         normalizedPlayerZhMap[stripAccents(cleaned).lowercase()]?.let { return it to false }
         return transliterateToChinese(cleaned, isClub = false) to true
     }
 
-    fun localizeCoach(rawName: String): String =
-        if (rawName.isBlank()) "" else localizePlayer(rawName).first
+    fun localizeCoach(rawName: String): String {
+        val cleaned = rawName.trim()
+        if (cleaned.isEmpty()) return ""
+        if (containsCjk(cleaned)) return cleaned
+        ZhEntityDictionary.findCoach(cleaned)?.let { return it.zhName }
+        return localizePlayer(cleaned).first
+    }
+
+    fun preferChineseCoach(rawName: String, existingZh: String?): String {
+        val cleanedEn = rawName.trim()
+        if (cleanedEn.isNotEmpty()) {
+            ZhEntityDictionary.findCoach(cleanedEn)?.let { return it.zhName }
+            playerZhMap[cleanedEn]?.let { return it }
+            normalizedPlayerZhMap[stripAccents(cleanedEn).lowercase()]?.let { return it }
+        }
+        if (!existingZh.isNullOrBlank() && containsCjk(existingZh)) {
+            return existingZh.trim()
+        }
+        return localizeCoach(cleanedEn)
+    }
+
+    fun shortPlayerDisplayName(rawName: String, zhName: String): String {
+        ZhEntityDictionary.findPlayer(rawName)?.let { entry ->
+            if (entry.shortZh.isNotBlank()) return entry.shortZh
+        }
+        val cleanZh = zhName.trim()
+        if (cleanZh.isEmpty()) return rawName.trim().substringAfterLast(' ').take(8)
+        val surname = cleanZh.substringAfter("·").ifBlank { cleanZh }
+        return if (surname.length > 5) surname.take(5) else surname
+    }
 
     fun localizePosition(pos: String?): String =
         if (pos.isNullOrBlank()) "球员" else positionZhMap[pos.trim()] ?: pos.trim()
 
     fun preferChinese(rawName: String, existingZh: String?): String {
+        ZhEntityDictionary.findTeam(rawName)?.let { return it.zhName }
         if (!existingZh.isNullOrBlank() && containsCjk(existingZh)) {
             val fromDict = exactTeamZhMap[rawName] ?: normalizedTeamZhMap[normalizeKey(rawName)]
             return fromDict ?: existingZh

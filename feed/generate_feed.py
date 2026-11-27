@@ -31,6 +31,7 @@ from localization import (
     PLAYER_ZH_MAP,
     TEAM_ZH_MAP,
     _normalize_team_key,
+    localize_coach,
     localize_espn_group,
     localize_espn_zone,
     localize_player,
@@ -788,7 +789,7 @@ def fetch_competition_teams_and_squads(api_key: str, competition_code: str) -> l
         t_short = t.get("shortName") or t.get("tla") or t_name
         coach = t.get("coach") or {}
         coach_name = coach.get("name") or ""
-        coach_zh, _ = localize_player(coach_name)
+        coach_zh = localize_coach(coach_name)
         squad_rows: list[dict[str, Any]] = []
         for s in t.get("squad") or []:
             p_name = s.get("name") or ""
@@ -1405,6 +1406,30 @@ def _load_existing_feed(url: str | None) -> dict[str, Any]:
         return {}
 
 
+def _select_active_af_coach(coaches: list[dict[str, Any]], team_id: int) -> dict[str, Any] | None:
+    if not coaches:
+        return None
+    best: tuple[str, dict[str, Any]] | None = None
+    for coach in coaches:
+        name = (coach.get("name") or "").strip()
+        if not name:
+            continue
+        team_careers = [
+            c for c in (coach.get("career") or [])
+            if ((c.get("team") or {}).get("id") == team_id)
+        ]
+        active = [c for c in team_careers if not (c.get("end") or "").strip()]
+        if active:
+            score = "2_" + max((str(c.get("start") or "") for c in active), default="")
+        elif team_careers:
+            score = "1_" + max((str(c.get("end") or c.get("start") or "") for c in team_careers), default="")
+        else:
+            score = "0_"
+        if best is None or score > best[0]:
+            best = (score, coach)
+    return best[1] if best else None
+
+
 def _fetch_af_team_detail(api_key: str, team_id: int, comp_code: str, fallback_name: str, fallback_crest: str) -> dict[str, Any]:
     venue_name = ""
     founded = 0
@@ -1430,9 +1455,10 @@ def _fetch_af_team_detail(api_key: str, team_id: int, comp_code: str, fallback_n
     try:
         c_resp = fetch_json(f"https://v3.football.api-sports.io/coachs?team={team_id}", {"x-apisports-key": api_key})
         c_rows = c_resp.get("response") or []
-        if c_rows:
-            coach_name = c_rows[0].get("name") or ""
-            coach_portrait = (c_rows[0].get("photo") or "").strip()
+        best_coach = _select_active_af_coach(c_rows, team_id)
+        if best_coach:
+            coach_name = best_coach.get("name") or ""
+            coach_portrait = (best_coach.get("photo") or "").strip()
     except Exception:  # noqa: BLE001
         pass
 
@@ -1464,7 +1490,7 @@ def _fetch_af_team_detail(api_key: str, team_id: int, comp_code: str, fallback_n
     except Exception:  # noqa: BLE001
         pass
 
-    coach_zh, _ = localize_player(coach_name)
+    coach_zh = localize_coach(coach_name)
     return {
         "teamId": team_id,
         "competitionCode": comp_code,
@@ -2230,16 +2256,20 @@ def fetch_espn_summary_detail(match_id: str, slug: str, event_id: str) -> dict[s
         roster_list = r.get("roster") or []
         starters = []
         subs = []
+        seen_starter_ids: set[str] = set()
+        seen_sub_ids: set[str] = set()
         for item in roster_list:
             ath = item.get("athlete") or {}
             pn = (ath.get("displayName") or "").strip()
             if not pn:
                 continue
+            pid = str(ath.get("id") or "").strip() or pn.lower()
             j = str(item.get("jersey") or "")
             pos = ((item.get("position") or {}).get("abbreviation") or "")
             fp_raw = str(item.get("formationPlace") or "")
             st_map = {s.get("name"): int(round(float(s.get("value") or 0))) for s in (item.get("stats") or []) if s.get("name")}
             slot = {
+                "playerId": pid,
                 "name": pn,
                 "zhName": localize_player(pn)[0],
                 "number": int(j) if j.isdigit() else 0,
@@ -2260,9 +2290,13 @@ def fetch_espn_summary_detail(match_id: str, slug: str, event_id: str) -> dict[s
                 "subbedOut": bool(item.get("subbedOut")),
             }
             if item.get("starter"):
-                starters.append(slot)
+                if pid not in seen_starter_ids:
+                    seen_starter_ids.add(pid)
+                    starters.append(slot)
             else:
-                subs.append(slot)
+                if pid not in seen_sub_ids:
+                    seen_sub_ids.add(pid)
+                    subs.append(slot)
         starters.sort(key=lambda s: (s["formationPlace"] if s["formationPlace"] > 0 else 99, s["number"]))
         lineups.append(
             {
@@ -2709,7 +2743,34 @@ def collect_data(
         except Exception as exc:  # noqa: BLE001
             errors.append(f"Wikipedia portraits: {exc}")
 
-    # Hydrate coach & squad portraits into pre-cached liveDetails lineups as well
+    # Hydrate coach & squad portraits into pre-cached liveDetails lineups as well,
+    # while prioritizing the latest official finished/live match's coach on teams_by_key.
+    latest_official_coach: dict[str, tuple[str, str, str, str]] = {}
+    for mid, det in live_details.items():
+        m_ref = collected.get(mid)
+        if not m_ref or m_ref.status not in {"FINISHED", "LIVE", "PAUSED", "IN_PLAY"}:
+            continue
+        utc_key = m_ref.utcDate or ""
+        for side in det.get("lineups") or []:
+            c_nm = (side.get("coachName") or "").strip()
+            if not c_nm:
+                continue
+            tk = _normalize_team_key(side.get("teamName") or "")
+            if not tk:
+                continue
+            prev = latest_official_coach.get(tk)
+            if prev is None or utc_key > prev[0]:
+                c_zh = localize_coach(c_nm, side.get("coachZhName") or "")
+                c_img = (side.get("coachPortraitUrl") or "").strip()
+                latest_official_coach[tk] = (utc_key, c_nm, c_zh, c_img)
+    for tk, (_, c_nm, c_zh, c_img) in latest_official_coach.items():
+        td_ref = teams_by_key.get(tk)
+        if td_ref:
+            td_ref["coachName"] = c_nm
+            td_ref["coachZhName"] = c_zh
+            if c_img:
+                td_ref["coachPortraitUrl"] = c_img
+
     all_portrait_lookup = dict(cached_portraits_by_name)
     for p in final_players:
         if p.get("name") and p.get("portraitUrl"):
@@ -2727,7 +2788,7 @@ def collect_data(
             if td_ref:
                 if not side.get("coachName") and td_ref.get("coachName"):
                     side["coachName"] = td_ref["coachName"]
-                    side["coachZhName"] = td_ref.get("coachZhName") or localize_player(td_ref["coachName"])[0]
+                    side["coachZhName"] = td_ref.get("coachZhName") or localize_coach(td_ref["coachName"])
                 if not side.get("coachPortraitUrl"):
                     side["coachPortraitUrl"] = td_ref.get("coachPortraitUrl") or all_portrait_lookup.get((side.get("coachName") or "").lower(), "")
             for slot in (side.get("startXI") or []) + (side.get("substitutes") or []):

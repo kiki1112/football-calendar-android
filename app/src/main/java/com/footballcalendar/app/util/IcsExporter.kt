@@ -32,8 +32,9 @@ object IcsExporter {
                 ""
             }
             val summary = "[${m.competitionZhName}] ${m.homeTeamZhName} vs ${m.awayTeamZhName}$scoreSuffix"
-            val description = "赛事: ${m.competitionZhName} (${m.competitionName})\\n状态: ${m.status.zhLabel}"
-            val status = if (m.status.isCancelledOrPostponed) "CANCELLED" else "CONFIRMED"
+            val phaseLabel = MatchPhaseFormatter.formatLabels(m.phase).topBadgeText
+            val description = "赛事: ${m.competitionZhName} (${m.competitionName})\\n状态: $phaseLabel"
+            val status = if (m.phase.isPostponed) "CANCELLED" else "CONFIRMED"
 
             sb.append("BEGIN:VEVENT\r\n")
             sb.append("UID:${m.id}@football-calendar\r\n")

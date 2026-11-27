@@ -61,7 +61,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.footballcalendar.app.model.CompetitionCatalog
 import com.footballcalendar.app.model.MatchItem
-import com.footballcalendar.app.model.MatchStatus
 import com.footballcalendar.app.model.StandingEntry
 import com.footballcalendar.app.model.StarPlayer
 import com.footballcalendar.app.model.TeamDetailInfo
@@ -78,6 +77,8 @@ import com.footballcalendar.app.ui.theme.AppleRedTint
 import com.footballcalendar.app.ui.theme.InkPrimary
 import com.footballcalendar.app.ui.theme.InkSecondary
 import com.footballcalendar.app.ui.theme.InkTertiary
+import com.footballcalendar.app.ui.theme.TeamColorRegistry
+import com.footballcalendar.app.util.MatchPhaseFormatter
 import com.footballcalendar.app.util.MatchTimeFormatter
 import com.footballcalendar.app.util.TeamAssetCatalog
 import com.footballcalendar.app.util.TeamLocalization
@@ -594,7 +595,21 @@ private fun PlayerRankCard(
                     )
                 }
             }
-            PlayerPortrait(url = player.portraitUrl, playerName = player.zhName, size = 52.dp)
+            val playerClubColor = remember(player.clubName, player.clubZhName, player.nationalName, player.nationalZhName) {
+                TeamColorRegistry.resolvePrimaryColor(
+                    player.clubName,
+                    player.clubZhName,
+                    player.nationalName,
+                    player.nationalZhName,
+                )
+            }
+            PlayerPortrait(
+                url = player.portraitUrl,
+                playerName = player.zhName,
+                size = 52.dp,
+                shirtNumber = player.shirtNumber,
+                teamColor = playerClubColor,
+            )
 
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -757,10 +772,13 @@ private fun TeamProfileSummaryCard(
                 }
             }
 
-            if (teamDetail != null && (teamDetail.coachZhName.isNotBlank() || teamDetail.venue.isNotBlank())) {
+            if (teamDetail != null && (teamDetail.coachName.isNotBlank() || teamDetail.coachZhName.isNotBlank() || teamDetail.venue.isNotBlank())) {
+                val resolvedCoachZh = TeamLocalization.preferChineseCoach(teamDetail.coachName, teamDetail.coachZhName)
                 Text(
                     text = listOfNotNull(
-                        teamDetail.coachZhName.takeIf { it.isNotBlank() }?.let { "主帅: $it (${teamDetail.coachName})" },
+                        resolvedCoachZh.takeIf { it.isNotBlank() }?.let { coachZh ->
+                            if (teamDetail.coachName.isNotBlank()) "主帅: $coachZh (${teamDetail.coachName})" else "主帅: $coachZh"
+                        },
                         teamDetail.venue.takeIf { it.isNotBlank() }?.let { "主场: $it" },
                         teamDetail.squad.size.takeIf { it > 0 }?.let { "阵容: ${it}人" },
                     ).joinToString(" · "),
@@ -802,7 +820,7 @@ private fun TeamProfileSummaryCard(
                             text = if (m.homeScore != null && m.awayScore != null) {
                                 "${m.homeScore}:${m.awayScore}"
                             } else {
-                                m.status.zhLabel
+                                MatchPhaseFormatter.formatLabels(m.phase).topBadgeText
                             },
                             style = MaterialTheme.typography.labelMedium,
                             color = AppleRed,
@@ -834,12 +852,12 @@ fun PlayerDetailSheet(
 
     val upcomingList = remember(upcomingMatches) {
         upcomingMatches
-            .filter { it.status != MatchStatus.FINISHED && !it.status.isCancelledOrPostponed && !(it.homeScore != null && it.awayScore != null && !it.status.isLive) }
+            .filter { !it.phase.isFinished && !it.phase.isPostponed && !(it.homeScore != null && it.awayScore != null && !it.phase.isLiveOrHalfTime) }
             .sortedBy { it.utcDate }
     }
     val finishedList = remember(upcomingMatches) {
         upcomingMatches
-            .filter { it.status == MatchStatus.FINISHED || (it.homeScore != null && it.awayScore != null && !it.status.isLive) }
+            .filter { it.phase.isFinished || (it.homeScore != null && it.awayScore != null && !it.phase.isLiveOrHalfTime) }
             .sortedByDescending { it.utcDate }
     }
     val resolvedBio = remember(player.id, player.bio) {
@@ -961,7 +979,21 @@ fun PlayerDetailSheet(
                 ) {
                     item {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                            PlayerPortrait(url = player.portraitUrl, playerName = player.zhName, size = 84.dp)
+                            val detailClubColor = remember(player.clubName, player.clubZhName, player.nationalName, player.nationalZhName) {
+                                TeamColorRegistry.resolvePrimaryColor(
+                                    player.clubName,
+                                    player.clubZhName,
+                                    player.nationalName,
+                                    player.nationalZhName,
+                                )
+                            }
+                            PlayerPortrait(
+                                url = player.portraitUrl,
+                                playerName = player.zhName,
+                                size = 84.dp,
+                                shirtNumber = player.shirtNumber,
+                                teamColor = detailClubColor,
+                            )
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = if (player.shirtNumber > 0) "${player.zhName} · #${player.shirtNumber}" else player.zhName,

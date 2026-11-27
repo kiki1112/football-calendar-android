@@ -94,8 +94,8 @@ import com.footballcalendar.app.model.MatchEventItem
 import com.footballcalendar.app.model.MatchH2HBundle
 import com.footballcalendar.app.model.MatchItem
 import com.footballcalendar.app.model.MatchLineupSide
+import com.footballcalendar.app.model.MatchPhase
 import com.footballcalendar.app.model.MatchStatPair
-import com.footballcalendar.app.model.MatchStatus
 import com.footballcalendar.app.model.ScheduleChange
 import com.footballcalendar.app.model.StandingEntry
 import com.footballcalendar.app.model.StarPlayer
@@ -117,10 +117,14 @@ import com.footballcalendar.app.ui.theme.AppleRedTint
 import com.footballcalendar.app.ui.theme.InkPrimary
 import com.footballcalendar.app.ui.theme.InkSecondary
 import com.footballcalendar.app.ui.theme.InkTertiary
+import com.footballcalendar.app.ui.theme.TeamColorRegistry
+import com.footballcalendar.app.ui.theme.ThemeTokens
+import com.footballcalendar.app.util.LineupSanitizer
+import com.footballcalendar.app.util.MatchPhaseFormatter
 import com.footballcalendar.app.util.MatchTimeFormatter
+import com.footballcalendar.app.util.TeamLocalization
 import kotlinx.coroutines.delay
 import java.time.DayOfWeek
-import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
@@ -332,7 +336,7 @@ fun CalendarScreen(
                     EmptyDayWhiteCard(
                         onRefresh = onRefresh,
                         upcomingMatches = state.filteredMatches
-                            .filter { !it.status.isCancelledOrPostponed }
+                            .filter { !it.phase.isPostponed }
                             .take(3),
                         onJumpMatchDate = { m ->
                             MatchTimeFormatter.displayDateFor(
@@ -376,24 +380,12 @@ private fun HeroNextMatchCard(
         }
     }
 
-    val kickoffInstant = MatchTimeFormatter.parseInstant(match.utcDate)
-    val countdownText = remember(match.utcDate, nowMillis) {
-        if (kickoffInstant == null) {
-            "--:--:--"
-        } else {
-            val sec = Duration.between(Instant.ofEpochMilli(nowMillis), kickoffInstant).seconds
-            when {
-                sec in -6900..0 -> "LIVE 进行中"
-                sec < -6900 -> "已结束"
-                sec < 86400 -> {
-                    val h = sec / 3600
-                    val m = (sec % 3600) / 60
-                    val s = sec % 60
-                    "%02d:%02d:%02d".format(h, m, s)
-                }
-                else -> MatchTimeFormatter.formatMonthDayTime(match.utcDate)
-            }
-        }
+    val countdownText = remember(match.phase, match.utcDate, nowMillis) {
+        MatchPhaseFormatter.formatHeroCountdown(
+            phase = match.phase,
+            utcDate = match.utcDate,
+            nowMillis = nowMillis,
+        )
     }
 
     val tagText = when {
@@ -747,6 +739,8 @@ private fun AppleMatchCard(
 ) {
     val kickoff = MatchTimeFormatter.formatKickoffTime(match.utcDate)
     val isEarly = MatchTimeFormatter.isEarlyMorning(match.utcDate)
+    val phase = match.phase
+    val phaseLabels = remember(phase) { MatchPhaseFormatter.formatLabels(phase) }
 
     Surface(
         modifier = Modifier
@@ -804,22 +798,17 @@ private fun AppleMatchCard(
                 ) {
                     Surface(
                         color = when {
-                            match.status.isLive -> AppleLiveRed
-                            match.status.isCancelledOrPostponed -> AppleRedTint
+                            phase.isLiveOrHalfTime -> AppleLiveRed
+                            phase.isPostponed -> AppleRedTint
                             else -> AppleCanvas
                         },
                         shape = RoundedCornerShape(999.dp),
                     ) {
-                        val liveBadge = if (match.status.isLive) {
-                            match.elapsedMinutes?.let { "● LIVE ${it}'" } ?: "● LIVE"
-                        } else {
-                            match.status.zhLabel
-                        }
                         Text(
-                            text = liveBadge,
+                            text = phaseLabels.topBadgeText,
                             color = when {
-                                match.status.isLive -> Color.White
-                                match.status.isCancelledOrPostponed -> AppleRed
+                                phase.isLiveOrHalfTime -> Color.White
+                                phase.isPostponed -> AppleRed
                                 else -> InkSecondary
                             },
                             style = MaterialTheme.typography.labelSmall,
@@ -874,7 +863,7 @@ private fun AppleMatchCard(
                 ) {
                     if (match.homeScore != null && match.awayScore != null) {
                         Surface(
-                            color = if (match.status.isLive) AppleRedTint else AppleCanvas,
+                            color = if (phase.isLiveOrHalfTime) AppleRedTint else AppleCanvas,
                             shape = RoundedCornerShape(10.dp),
                         ) {
                             Text(
@@ -884,7 +873,7 @@ private fun AppleMatchCard(
                                     fontWeight = FontWeight.Black,
                                     fontFeatureSettings = "tnum",
                                 ),
-                                color = if (match.status.isLive) AppleRed else InkPrimary,
+                                color = if (phase.isLiveOrHalfTime) AppleRed else InkPrimary,
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                             )
                         }
@@ -964,7 +953,7 @@ private fun AppleMatchCard(
                     modifier = Modifier.weight(1f),
                 )
                 Text(
-                    text = "${MatchTimeFormatter.formatRelativeCountdown(match.utcDate)} ›",
+                    text = phaseLabels.bottomEntryText,
                     style = MaterialTheme.typography.labelSmall,
                     color = AppleRed,
                     fontWeight = FontWeight.SemiBold,
@@ -1094,12 +1083,9 @@ fun MatchDetailBottomSheet(
 
     val hScore = liveDetail?.homeScore ?: match.homeScore
     val aScore = liveDetail?.awayScore ?: match.awayScore
-    val minSuffix = (liveDetail?.elapsedMinutes ?: match.elapsedMinutes)?.let { " $it'" } ?: ""
-    val headerStatusBadge = when {
-        match.status.isLive -> "进行中$minSuffix"
-        match.status == MatchStatus.FINISHED -> "完"
-        else -> "未开赛"
-    }
+    val effectivePhase = match.effectivePhase(liveDetail)
+    val phaseLabels = MatchPhaseFormatter.formatLabels(effectivePhase)
+    val headerStatusBadge = phaseLabels.detailHeaderBadgeText
 
     Column(
         modifier = if (isFullScreen) {
@@ -1170,7 +1156,7 @@ fun MatchDetailBottomSheet(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Surface(
-                            color = if (match.status.isLive) AppleRed else Color.White.copy(alpha = 0.22f),
+                            color = if (effectivePhase.isLiveOrHalfTime) AppleRed else Color.White.copy(alpha = 0.22f),
                             shape = RoundedCornerShape(6.dp),
                         ) {
                             Text(
@@ -1390,6 +1376,7 @@ fun MatchDetailBottomSheet(
                                 match = match,
                                 hScore = hScore,
                                 aScore = aScore,
+                                effectivePhase = effectivePhase,
                                 homeStanding = homeStanding,
                                 awayStanding = awayStanding,
                                 isWatchlisted = isWatchlisted,
@@ -1555,7 +1542,9 @@ private fun MatchHeroSummaryCard(
     isWatchlisted: Boolean,
     onToggleWatchlist: () -> Unit,
     onClickTeam: (enName: String, zhName: String, compCode: String, crest: String, teamId: Int) -> Unit,
+    effectivePhase: MatchPhase = match.phase,
 ) {
+    val phaseLabels = remember(effectivePhase) { MatchPhaseFormatter.formatLabels(effectivePhase) }
     Surface(color = Color.White, shape = RoundedCornerShape(20.dp)) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(
@@ -1565,7 +1554,7 @@ private fun MatchHeroSummaryCard(
             ) {
                 Surface(color = AppleRedTint, shape = RoundedCornerShape(999.dp)) {
                     Text(
-                        text = "${match.competitionZhName} · ${match.status.zhLabel}",
+                        text = "${match.competitionZhName} · ${phaseLabels.topBadgeText}",
                         color = AppleRed,
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
@@ -1707,17 +1696,20 @@ private fun MatchLiveEventsTabContent(
                         }
                     }
 
+                    val effectivePhase = match.effectivePhase(liveDetail)
                     Surface(
                         shape = RoundedCornerShape(999.dp),
-                        color = AppleRedTint,
+                        color = if (match.isFinalized || effectivePhase.isFinished) ThemeTokens.SurfaceSubtle else AppleRedTint,
                     ) {
                         Text(
                             text = when {
+                                match.isFinalized -> "● 赛果已封存"
+                                effectivePhase.isFinished -> "● 官方快照"
                                 isLoading -> "同步中..."
-                                match.status.isLive -> "● 4秒实时轮询"
+                                effectivePhase.isLiveOrHalfTime -> "● 4秒实时轮询"
                                 else -> "● 官方事件流"
                             },
-                            color = AppleRed,
+                            color = if (match.isFinalized || effectivePhase.isFinished) ThemeTokens.InkSecondary else AppleRed,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -1776,11 +1768,18 @@ private fun MatchLiveEventsTabContent(
                     }
                 }
 
-                if (isLoading && liveDetail == null) {
+                val effectivePhase = match.effectivePhase(liveDetail)
+                if (isLoading && liveDetail == null && !match.isFinalized && !effectivePhase.isFinished) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = AppleRed)
                         Text("正在高速拉取实时事件与图文直播流...", style = MaterialTheme.typography.bodySmall, color = InkSecondary)
                     }
+                } else if (match.isFinalized && liveDetail == null) {
+                    Text(
+                        text = note ?: "本场暂无文字直播记录",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = InkSecondary,
+                    )
                 } else if (
                     !note.isNullOrBlank() &&
                     (liveDetail == null || (liveDetail.events.isEmpty() && liveDetail.commentary.isEmpty()))
@@ -1792,10 +1791,13 @@ private fun MatchLiveEventsTabContent(
                     if (subMode == 0) {
                         if (liveDetail.events.isEmpty()) {
                             Text(
-                                text = if (match.status == MatchStatus.TIMED || match.status == MatchStatus.SCHEDULED) {
-                                    "比赛尚未开始，开球后将自动实时推送进球、红黄牌与换人时间轴。"
-                                } else {
-                                    "暂无事件记录（可切换「图文直播」或下拉刷新获取）"
+                                text = when {
+                                    effectivePhase is MatchPhase.Upcoming ->
+                                        "比赛尚未开始，开球后将自动实时推送进球、红黄牌与换人时间轴。"
+                                    match.isFinalized || effectivePhase.isFinished ->
+                                        if (liveDetail.commentary.isEmpty()) "本场暂无文字直播记录" else "暂无重点事件（请切换「图文直播」查看全程文字播报）"
+                                    else ->
+                                        "暂无事件记录（可切换「图文直播」或下拉刷新获取）"
                                 },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = InkTertiary,
@@ -1901,7 +1903,7 @@ private fun MatchLiveEventsTabContent(
                     } else {
                         // Full Real-Time Text Commentary Feed
                         if (liveDetail.commentary.isEmpty()) {
-                            Text("本场暂无文字图文直播流（重要事件请切回「事件时间轴」）", style = MaterialTheme.typography.bodySmall, color = InkTertiary)
+                            Text("本场暂无文字直播记录", style = MaterialTheme.typography.bodySmall, color = InkTertiary)
                         } else {
                             val orderedAll = remember(liveDetail.commentary) {
                                 liveDetail.commentary.sortedWith(
@@ -2052,7 +2054,8 @@ private fun MatchTacticalLineupsTabContent(
     onClickLineupPlayer: (LineupPlayerItem, MatchLineupSide) -> Unit,
     onClickTeam: (enName: String, zhName: String, compCode: String, crest: String, teamId: Int) -> Unit,
 ) {
-    if (isLoading && liveDetail == null) {
+    val effectivePhase = match.effectivePhase(liveDetail)
+    if (isLoading && liveDetail == null && !match.isFinalized && !effectivePhase.isFinished) {
         Surface(color = Color.White, shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
             Row(modifier = Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = AppleRed)
@@ -2067,7 +2070,11 @@ private fun MatchTacticalLineupsTabContent(
             Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("双方首发阵容", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                 Text(
-                    text = note ?: "开赛前约 45 分钟公布官方首发与阵型，届时自动展示球场阵型图与球员头像。",
+                    text = when {
+                        match.isFinalized || effectivePhase.isFinished -> "本场暂无官方首发阵容快照"
+                        !note.isNullOrBlank() -> note
+                        else -> "开赛前约 45 分钟公布官方首发与阵型，届时自动展示球场阵型图与球员头像。"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = InkSecondary,
                 )
@@ -2080,6 +2087,31 @@ private fun MatchTacticalLineupsTabContent(
         it.teamZhName == match.homeTeamZhName || it.teamName.equals(match.homeTeamName, true)
     } ?: lineups[0]
     val awaySide = lineups.firstOrNull { it !== homeSide }
+
+    val homeStarters = remember(homeSide.startXI) { LineupSanitizer.dedupeStarters(homeSide.startXI) }
+    val awayStarters = remember(awaySide?.startXI) {
+        awaySide?.let { LineupSanitizer.dedupeStarters(it.startXI) }.orEmpty()
+    }
+    val homeTeamColor = remember(match.homeTeamName, match.homeTeamZhName, homeSide.teamName, homeSide.teamZhName) {
+        TeamColorRegistry.resolvePrimaryColor(
+            match.homeTeamName,
+            match.homeTeamZhName,
+            homeSide.teamName,
+            homeSide.teamZhName,
+        )
+    }
+    val awayTeamColor = remember(match.awayTeamName, match.awayTeamZhName, awaySide?.teamName, awaySide?.teamZhName) {
+        TeamColorRegistry.resolvePrimaryColor(
+            match.awayTeamName,
+            match.awayTeamZhName,
+            awaySide?.teamName,
+            awaySide?.teamZhName,
+        )
+    }
+    val canRenderPitch = LineupSanitizer.canRenderMatchPitch(
+        homeSide = homeSide.copy(startXI = homeStarters),
+        awaySide = awaySide?.copy(startXI = awayStarters),
+    )
 
     // Map per-player match event badges from liveDetail.events as reliable fallback
     val eventBadges = remember(liveDetail?.events) {
@@ -2120,6 +2152,20 @@ private fun MatchTacticalLineupsTabContent(
             }
         }
 
+        if (!canRenderPitch) {
+            TextLineupFallbackCard(
+                match = match,
+                homeSide = homeSide,
+                homeStarters = homeStarters,
+                homeTeamColor = homeTeamColor,
+                awaySide = awaySide,
+                awayStarters = awayStarters,
+                awayTeamColor = awayTeamColor,
+                eventBadges = eventBadges,
+                onClickLineupPlayer = onClickLineupPlayer,
+                onClickTeam = onClickTeam,
+            )
+        } else {
         // Green Tactical Football Pitch Canvas (图一核心绿茵阵型图!)
         Surface(
             shape = RoundedCornerShape(20.dp),
@@ -2190,8 +2236,8 @@ private fun MatchTacticalLineupsTabContent(
                         }
                     }
 
-                    val homeRows = remember(homeSide.startXI, homeSide.formation) {
-                        buildPitchFormationRows(homeSide.startXI, homeSide.formation, reverseRows = false)
+                    val homeRows = remember(homeStarters, homeSide.formation) {
+                        buildPitchFormationRows(homeStarters, homeSide.formation, reverseRows = false)
                     }
                     homeRows.forEach { rowPlayers ->
                         Row(
@@ -2202,7 +2248,8 @@ private fun MatchTacticalLineupsTabContent(
                             rowPlayers.forEach { lp ->
                                 PitchPlayerBadgeNode(
                                     player = lp,
-                                    ringColor = AppleRed,
+                                    ringColor = homeTeamColor,
+                                    teamColor = homeTeamColor,
                                     eventTags = eventBadges[lp.name.lowercase()].orEmpty(),
                                     onClick = { onClickLineupPlayer(lp, homeSide) },
                                 )
@@ -2233,8 +2280,8 @@ private fun MatchTacticalLineupsTabContent(
                     }
 
                     if (awaySide != null) {
-                        val awayRows = remember(awaySide.startXI, awaySide.formation) {
-                            buildPitchFormationRows(awaySide.startXI, awaySide.formation, reverseRows = true)
+                        val awayRows = remember(awayStarters, awaySide.formation) {
+                            buildPitchFormationRows(awayStarters, awaySide.formation, reverseRows = true)
                         }
                         awayRows.forEach { rowPlayers ->
                             Row(
@@ -2245,7 +2292,8 @@ private fun MatchTacticalLineupsTabContent(
                                 rowPlayers.forEach { lp ->
                                     PitchPlayerBadgeNode(
                                         player = lp,
-                                        ringColor = UclBlue,
+                                        ringColor = awayTeamColor,
+                                        teamColor = awayTeamColor,
                                         eventTags = eventBadges[lp.name.lowercase()].orEmpty(),
                                         onClick = { onClickLineupPlayer(lp, awaySide) },
                                     )
@@ -2283,6 +2331,7 @@ private fun MatchTacticalLineupsTabContent(
                     }
                 }
             }
+        }
         }
 
         // Substitutes Two-Column Card + Head Coaches (图一中下部: 替补阵容与主帅!)
@@ -2356,6 +2405,7 @@ private fun MatchTacticalLineupsTabContent(
                                     SubstitutePlayerRowCard(
                                         player = hs,
                                         tags = eventBadges[hs.name.lowercase()].orEmpty(),
+                                        teamColor = homeTeamColor,
                                         onClick = { onClickLineupPlayer(hs, homeSide) },
                                     )
                                 }
@@ -2365,6 +2415,7 @@ private fun MatchTacticalLineupsTabContent(
                                     SubstitutePlayerRowCard(
                                         player = aSub,
                                         tags = eventBadges[aSub.name.lowercase()].orEmpty(),
+                                        teamColor = awayTeamColor,
                                         onClick = { onClickLineupPlayer(aSub, awaySide) },
                                     )
                                 }
@@ -2388,44 +2439,129 @@ private fun MatchTacticalLineupsTabContent(
     }
 }
 
+@Composable
+private fun TextLineupFallbackCard(
+    match: MatchItem,
+    homeSide: MatchLineupSide,
+    homeStarters: List<LineupPlayerItem>,
+    homeTeamColor: Color,
+    awaySide: MatchLineupSide?,
+    awayStarters: List<LineupPlayerItem>,
+    awayTeamColor: Color,
+    eventBadges: Map<String, List<String>>,
+    onClickLineupPlayer: (LineupPlayerItem, MatchLineupSide) -> Unit,
+    onClickTeam: (enName: String, zhName: String, compCode: String, crest: String, teamId: Int) -> Unit,
+) {
+    Surface(
+        color = ThemeTokens.SurfacePure,
+        shape = RoundedCornerShape(18.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("双方首发阵容（文字名单）", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Surface(color = ThemeTokens.SurfaceSubtle, shape = RoundedCornerShape(ThemeTokens.RadiusCapsule)) {
+                    Text(
+                        text = "人数非11人自动降级",
+                        fontSize = 10.sp,
+                        color = ThemeTokens.InkSecondary,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                    )
+                }
+            }
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                onClickTeam(match.homeTeamName, match.homeTeamZhName, match.competitionCode, match.homeTeamCrest, match.homeTeamId)
+                            }
+                            .padding(vertical = 2.dp),
+                    ) {
+                        TeamCrest(url = match.homeTeamCrest, teamName = homeSide.teamZhName, size = 20.dp)
+                        Text(
+                            text = homeSide.teamZhName,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    homeStarters.forEach { lp ->
+                        SubstitutePlayerRowCard(
+                            player = lp,
+                            tags = eventBadges[lp.name.lowercase()].orEmpty(),
+                            teamColor = homeTeamColor,
+                            onClick = { onClickLineupPlayer(lp, homeSide) },
+                        )
+                    }
+                }
+
+                if (awaySide != null) {
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    onClickTeam(match.awayTeamName, match.awayTeamZhName, match.competitionCode, match.awayTeamCrest, match.awayTeamId)
+                                }
+                                .padding(vertical = 2.dp),
+                        ) {
+                            TeamCrest(url = match.awayTeamCrest, teamName = awaySide.teamZhName, size = 20.dp)
+                            Text(
+                                text = awaySide.teamZhName,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        awayStarters.forEach { lp ->
+                            SubstitutePlayerRowCard(
+                                player = lp,
+                                tags = eventBadges[lp.name.lowercase()].orEmpty(),
+                                teamColor = awayTeamColor,
+                                onClick = { onClickLineupPlayer(lp, awaySide) },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 private fun buildPitchFormationRows(
     starters: List<LineupPlayerItem>,
     formation: String,
     reverseRows: Boolean,
-): List<List<LineupPlayerItem>> {
-    if (starters.isEmpty()) return emptyList()
-    val rows = mutableListOf<List<LineupPlayerItem>>()
-    val formParts = formation.split("-").mapNotNull { it.trim().toIntOrNull() }.filter { it > 0 }
-    if (formParts.sum() == starters.size - 1 && starters.size >= 11) {
-        rows += listOf(starters[0])
-        var cursor = 1
-        for (cnt in formParts) {
-            rows += starters.subList(cursor, (cursor + cnt).coerceAtMost(starters.size))
-            cursor += cnt
-        }
-    } else {
-        val gks = starters.filter { it.pos.contains("G", true) }.ifEmpty { listOf(starters.first()) }
-        val remain = starters.filter { it !in gks }
-        val defs = remain.filter { it.pos.contains("D", true) || it.pos.contains("B", true) }
-        val mids = remain.filter { it.pos.contains("M", true) }
-        val fwds = remain.filter { it !in defs && it !in mids }
-        rows += gks
-        if (defs.isNotEmpty()) rows += defs else if (remain.size >= 4) rows += remain.take(4)
-        if (mids.isNotEmpty()) rows += mids
-        if (fwds.isNotEmpty()) rows += fwds
-        if (rows.flatten().size < starters.size) {
-            rows.clear()
-            rows += listOf(starters.first())
-            starters.drop(1).chunked(4).forEach { rows += it }
-        }
-    }
-    return if (reverseRows) rows.reversed() else rows
-}
+): List<List<LineupPlayerItem>> =
+    LineupSanitizer.buildPitchFormationRows(
+        starters = starters,
+        formation = formation,
+        reverseRows = reverseRows,
+    )
 
 @Composable
 private fun PitchPlayerBadgeNode(
     player: LineupPlayerItem,
     ringColor: Color,
+    teamColor: Color = ThemeTokens.AccentFallback,
     eventTags: List<String>,
     onClick: () -> Unit,
 ) {
@@ -2442,23 +2578,29 @@ private fun PitchPlayerBadgeNode(
                 modifier = Modifier
                     .size(38.dp)
                     .clip(CircleShape)
-                    .border(2.dp, ringColor, CircleShape)
-                    .background(Color.White),
+                    .border(2.dp, ringColor, CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
-                PlayerPortrait(url = player.portraitUrl, playerName = player.zhName, size = 36.dp)
+                PlayerPortrait(
+                    url = player.portraitUrl,
+                    playerName = player.zhName.ifBlank { player.name },
+                    size = 36.dp,
+                    shirtNumber = player.number,
+                    teamColor = teamColor,
+                )
             }
             if (player.number > 0) {
                 Surface(
-                    color = Color(0xCC1C1C1E),
+                    color = ThemeTokens.PitchBadgeScrim,
                     shape = CircleShape,
                     modifier = Modifier.align(Alignment.TopStart),
                 ) {
                     Text(
                         text = "${player.number}",
-                        color = Color.White,
+                        color = ThemeTokens.PureWhite,
                         fontSize = 8.sp,
                         fontWeight = FontWeight.Bold,
+                        style = TextStyle(fontFeatureSettings = "tnum"),
                         modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
                     )
                 }
@@ -2473,7 +2615,7 @@ private fun PitchPlayerBadgeNode(
                 }
             if (topTag != null) {
                 Surface(
-                    color = Color.White,
+                    color = ThemeTokens.PureWhite,
                     shape = RoundedCornerShape(999.dp),
                     shadowElevation = 1.dp,
                     modifier = Modifier.align(Alignment.TopEnd),
@@ -2483,12 +2625,12 @@ private fun PitchPlayerBadgeNode(
             }
         }
         Surface(
-            color = Color(0xB3111827),
+            color = ThemeTokens.PitchNameScrim,
             shape = RoundedCornerShape(999.dp),
         ) {
             Text(
-                text = player.zhName.substringAfter("·"),
-                color = Color.White,
+                text = TeamLocalization.shortPlayerDisplayName(player.name, player.zhName),
+                color = ThemeTokens.PureWhite,
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
@@ -2501,7 +2643,7 @@ private fun PitchPlayerBadgeNode(
             if (player.assists > 0) append("🎯${player.assists}")
         }.trim()
         if (extraSummary.isNotBlank()) {
-            Text(extraSummary, fontSize = 8.sp, color = Color.White, fontWeight = FontWeight.Bold)
+            Text(extraSummary, fontSize = 8.sp, color = ThemeTokens.PureWhite, fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -2510,6 +2652,7 @@ private fun PitchPlayerBadgeNode(
 private fun SubstitutePlayerRowCard(
     player: LineupPlayerItem,
     tags: List<String>,
+    teamColor: Color = ThemeTokens.AccentFallback,
     onClick: () -> Unit,
 ) {
     Surface(
@@ -2523,10 +2666,16 @@ private fun SubstitutePlayerRowCard(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            PlayerPortrait(url = player.portraitUrl, playerName = player.zhName, size = 30.dp)
+            PlayerPortrait(
+                url = player.portraitUrl,
+                playerName = player.zhName.ifBlank { player.name },
+                size = 30.dp,
+                shirtNumber = player.number,
+                teamColor = teamColor,
+            )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = if (player.number > 0) "#${player.number} ${player.zhName}" else player.zhName,
+                    text = if (player.number > 0) "#${player.number} ${TeamLocalization.shortPlayerDisplayName(player.name, player.zhName)}" else TeamLocalization.shortPlayerDisplayName(player.name, player.zhName),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
@@ -3153,7 +3302,7 @@ private fun MatchCenterAxisTimeline(
             }
         }
 
-        if (match.status == MatchStatus.FINISHED) {
+        if (match.phase.isFinished) {
             if (!insertedHalftimeBanner && allNodes.any { it.event.elapsed <= 45 }) {
                 TimelineDividerBadge(text = "半场结束 $htScoreStr")
             }

@@ -12,6 +12,7 @@ import com.footballcalendar.app.model.MatchStatus
 import com.footballcalendar.app.model.SquadMember
 import com.footballcalendar.app.model.StandingEntry
 import com.footballcalendar.app.model.TeamDetailInfo
+import com.footballcalendar.app.util.LineupSanitizer
 import com.footballcalendar.app.util.TeamAssetCatalog
 import com.footballcalendar.app.util.TeamLocalization
 import kotlinx.serialization.Serializable
@@ -435,11 +436,14 @@ data class EspnSummaryResponse(
                         foulsCommitted = stMap["foulsCommitted"] ?: 0,
                         subbedIn = slot.subbedIn,
                         subbedOut = slot.subbedOut,
+                        playerId = slot.athlete?.id?.trim()?.takeIf { it.isNotEmpty() }?.let { "espnp-$it" } ?: "",
                     )
                     if (slot.starter) starters += item else subs += item
                 }
             }
-            val sortedStarters = starters.sortedWith(compareBy<LineupPlayerItem>({ if (it.formationPlace > 0) it.formationPlace else 99 }, { it.number }))
+            val sortedStarters = LineupSanitizer.dedupeStarters(
+                starters.sortedWith(compareBy<LineupPlayerItem>({ if (it.formationPlace > 0) it.formationPlace else 99 }, { it.number })),
+            )
             MatchLineupSide(
                 teamName = tName,
                 teamZhName = TeamLocalization.localizeTeam(tName),
@@ -654,6 +658,7 @@ data class EspnParticipantDto(
 
 @Serializable
 data class EspnAthleteStubDto(
+    val id: String = "",
     val displayName: String = "",
     val headshot: EspnLogoDto? = null,
 )

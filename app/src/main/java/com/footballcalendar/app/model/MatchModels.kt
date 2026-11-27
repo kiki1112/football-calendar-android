@@ -1,5 +1,78 @@
 package com.footballcalendar.app.model
 
+import com.footballcalendar.app.util.MatchTimeFormatter
+
+/**
+ * Strongly-typed single state machine for match lifecycle (ARCHITECTURE.md Rule 3).
+ * All UI badges, card bottom entries, detail headers, and polling policies must read
+ * from the same [MatchPhase] instance.
+ */
+sealed interface MatchPhase {
+    data class Upcoming(val kickoffUtcMillis: Long) : MatchPhase
+    data class Live(val elapsedMinute: Int, val extraMinute: Int? = null) : MatchPhase
+    data object HalfTime : MatchPhase
+    data class Finished(val isAfterExtraTime: Boolean = false, val isPenalties: Boolean = false) : MatchPhase
+    data class Postponed(val reason: String? = null) : MatchPhase
+
+    val isLiveOrHalfTime: Boolean
+        get() = this is Live || this is HalfTime
+
+    val isFinished: Boolean
+        get() = this is Finished
+
+    val isPostponed: Boolean
+        get() = this is Postponed
+
+    val isUpcoming: Boolean
+        get() = this is Upcoming
+}
+
+object MatchPhaseResolver {
+    fun resolve(
+        status: MatchStatus,
+        utcDate: String,
+        elapsedMinutes: Int? = null,
+        extraMinute: Int? = null,
+        statusShort: String? = null,
+    ): MatchPhase {
+        val shortUpper = statusShort?.trim()?.uppercase().orEmpty()
+        val effectiveStatus = when {
+            shortUpper.isNotEmpty() -> {
+                val parsed = MatchStatus.fromRaw(shortUpper)
+                when {
+                    parsed != MatchStatus.UNKNOWN -> parsed
+                    shortUpper in setOf("FT", "AET", "PEN") -> MatchStatus.FINISHED
+                    shortUpper in setOf("1H", "2H", "ET", "P", "LIVE") -> MatchStatus.LIVE
+                    shortUpper in setOf("HT", "HALFTIME") -> MatchStatus.PAUSED
+                    shortUpper in setOf("PST", "CANC", "ABD", "AWD", "WO") -> MatchStatus.POSTPONED
+                    shortUpper == "SUSP" -> MatchStatus.SUSPENDED
+                    else -> status
+                }
+            }
+            else -> status
+        }
+
+        return when (effectiveStatus) {
+            MatchStatus.POSTPONED -> MatchPhase.Postponed(reason = "已延期")
+            MatchStatus.SUSPENDED -> MatchPhase.Postponed(reason = "已暂停")
+            MatchStatus.CANCELLED -> MatchPhase.Postponed(reason = "已取消")
+            MatchStatus.FINISHED -> MatchPhase.Finished(
+                isAfterExtraTime = shortUpper == "AET",
+                isPenalties = shortUpper == "PEN",
+            )
+            MatchStatus.PAUSED -> MatchPhase.HalfTime
+            MatchStatus.LIVE, MatchStatus.IN_PLAY -> MatchPhase.Live(
+                elapsedMinute = (elapsedMinutes ?: 0).coerceAtLeast(0),
+                extraMinute = extraMinute?.takeIf { it > 0 },
+            )
+            MatchStatus.TIMED, MatchStatus.SCHEDULED, MatchStatus.UNKNOWN -> {
+                val kickoffMillis = MatchTimeFormatter.parseInstant(utcDate)?.toEpochMilli() ?: 0L
+                MatchPhase.Upcoming(kickoffUtcMillis = kickoffMillis)
+            }
+        }
+    }
+}
+
 enum class MatchStatus(val zhLabel: String) {
     TIMED("未开赛"),
     SCHEDULED("待定开球"),
@@ -126,7 +199,28 @@ data class MatchItem(
     val apiFootballFixtureId: Int? = null,
     val espnSlug: String? = null,
     val espnEventId: String? = null,
+    val lotteryCode: String? = null,
+    val lotteryHandicap: Int? = null,
+    val lotteryDeadlineUtc: Long? = null,
+    val isFinalized: Boolean = false,
 ) {
+    val phase: MatchPhase
+        get() = MatchPhaseResolver.resolve(
+            status = status,
+            utcDate = utcDate,
+            elapsedMinutes = elapsedMinutes,
+        )
+
+    fun effectivePhase(liveDetail: LiveMatchDetail?): MatchPhase {
+        if (liveDetail == null) return phase
+        return MatchPhaseResolver.resolve(
+            status = status,
+            utcDate = utcDate,
+            elapsedMinutes = liveDetail.elapsedMinutes ?: elapsedMinutes,
+            statusShort = liveDetail.statusShort,
+        )
+    }
+
     val isInternational: Boolean
         get() = competitionCode in CompetitionCatalog.internationalCodes
 
@@ -266,7 +360,17 @@ data class LineupPlayerItem(
     val subbedIn: Boolean = false,
     val subbedOut: Boolean = false,
     val rating: String = "",
-)
+    val playerId: String = "",
+) {
+    val id: String
+        get() = effectivePlayerId
+
+    val effectivePlayerId: String
+        get() = playerId.trim().ifBlank {
+            val base = name.trim().lowercase().ifBlank { zhName.trim().lowercase() }
+            "$base#$number"
+        }
+}
 
 data class MatchLineupSide(
     val teamName: String,

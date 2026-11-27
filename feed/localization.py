@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import json
+import pathlib
 import re
 import unicodedata
 
@@ -860,6 +862,35 @@ _NORMALIZED_PLAYER_ZH_MAP: dict[str, str] = {
 }
 
 
+def _load_zh_entities_coaches() -> dict[str, str]:
+    repo_root = pathlib.Path(__file__).resolve().parents[1]
+    candidates = [
+        repo_root / "cloud-sync" / "dictionary" / "zh_entities.json",
+        repo_root / "app" / "src" / "main" / "assets" / "zh_entities.json",
+    ]
+    out: dict[str, str] = {}
+    for p in candidates:
+        if not p.exists():
+            continue
+        try:
+            payload = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        for key, entry in (payload.get("coaches") or {}).items():
+            zh = (entry.get("zhName") or "").strip() if isinstance(entry, dict) else ""
+            if not zh:
+                continue
+            for raw_k in (key, entry.get("enName", ""), *(entry.get("aliases") or [])):
+                nk = strip_accents(str(raw_k)).lower().strip()
+                if nk:
+                    out[nk] = zh
+        break
+    return out
+
+
+_NORMALIZED_COACH_ZH_MAP: dict[str, str] = _load_zh_entities_coaches()
+
+
 def _phonetic_word(word: str) -> str:
     w = re.sub(r"[^a-z]", "", strip_accents(word).lower())
     if not w:
@@ -974,6 +1005,20 @@ def localize_player(name: str) -> tuple[str, bool]:
     if norm in _NORMALIZED_PLAYER_ZH_MAP:
         return (_NORMALIZED_PLAYER_ZH_MAP[norm], False)
     return (transliterate_name_to_zh(cleaned, is_club=False), True)
+
+
+def localize_coach(name: str, existing_zh: str = "") -> str:
+    cleaned = name.strip()
+    if cleaned:
+        norm = strip_accents(cleaned).lower().strip()
+        if norm in _NORMALIZED_COACH_ZH_MAP:
+            return _NORMALIZED_COACH_ZH_MAP[norm]
+        if norm in _NORMALIZED_PLAYER_ZH_MAP:
+            return _NORMALIZED_PLAYER_ZH_MAP[norm]
+    ex = existing_zh.strip()
+    if ex and contains_cjk(ex):
+        return ex
+    return localize_player(cleaned)[0] if cleaned else ""
 
 
 def localize_position(pos: str | None) -> str:

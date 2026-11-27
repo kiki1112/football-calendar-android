@@ -10,6 +10,7 @@ import android.widget.RemoteViews
 import com.footballcalendar.app.FootballCalendarApplication
 import com.footballcalendar.app.MainActivity
 import com.footballcalendar.app.R
+import com.footballcalendar.app.util.MatchPhaseFormatter
 import com.footballcalendar.app.util.MatchTimeFormatter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -55,7 +56,8 @@ class NextMatchWidgetProvider : AppWidgetProvider() {
             val now = Instant.now().minusSeconds(1800)
 
             val upcoming = matches.filter { match ->
-                !match.status.isCancelledOrPostponed &&
+                !match.phase.isPostponed &&
+                    !match.phase.isFinished &&
                     match.competitionCode in prefs.followedCompetitions &&
                     (MatchTimeFormatter.parseInstant(match.utcDate)?.isAfter(now) == true)
             }
@@ -84,7 +86,8 @@ class NextMatchWidgetProvider : AppWidgetProvider() {
                         R.id.widget_teams,
                         "${preferred.homeTeamZhName} vs ${preferred.awayTeamZhName}",
                     )
-                    val countdown = MatchTimeFormatter.formatRelativeCountdown(preferred.utcDate)
+                    val phaseLabels = MatchPhaseFormatter.formatLabels(preferred.phase)
+                    val countdown = phaseLabels.bottomEntryText.removeSuffix(" ›")
                     val meta = if (preferred.venue.isNotBlank()) "$countdown · ${preferred.venue}" else countdown
                     views.setTextViewText(R.id.widget_meta, meta)
                 } else {

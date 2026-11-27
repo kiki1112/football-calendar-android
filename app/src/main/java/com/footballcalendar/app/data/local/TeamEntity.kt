@@ -47,6 +47,7 @@ data class TeamEntity(
     val squadJson: String,
     val espnTeamId: String = "",
     val espnSlug: String = "",
+    val coachPortraitUrl: String = "",
 ) {
     fun toDomain(json: Json): TeamDetailInfo {
         val parsed = runCatching {
@@ -63,7 +64,7 @@ data class TeamEntity(
             founded = founded,
             clubColors = clubColors,
             coachName = coachName,
-            coachZhName = coachZhName.ifBlank { TeamLocalization.localizeCoach(coachName) },
+            coachZhName = TeamLocalization.preferChineseCoach(coachName, coachZhName),
             coachNationality = coachNationality,
             squad = parsed.map { m ->
                 val (pZh, tr) = if (m.zhName.isNotBlank() && TeamLocalization.containsCjk(m.zhName)) {
@@ -86,6 +87,7 @@ data class TeamEntity(
             },
             espnTeamId = espnTeamId,
             espnSlug = espnSlug,
+            coachPortraitUrl = coachPortraitUrl,
         )
     }
 
@@ -102,7 +104,7 @@ data class TeamEntity(
             founded = info.founded,
             clubColors = info.clubColors,
             coachName = info.coachName,
-            coachZhName = info.coachZhName,
+            coachZhName = TeamLocalization.preferChineseCoach(info.coachName, info.coachZhName),
             coachNationality = info.coachNationality,
             squadJson = json.encodeToString(
                 info.squad.map {
@@ -122,6 +124,7 @@ data class TeamEntity(
             ),
             espnTeamId = info.espnTeamId,
             espnSlug = info.espnSlug,
+            coachPortraitUrl = info.coachPortraitUrl,
         )
     }
 }

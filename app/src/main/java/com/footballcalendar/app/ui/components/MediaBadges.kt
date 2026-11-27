@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -38,10 +39,10 @@ import coil.request.ImageRequest
 import com.footballcalendar.app.FootballCalendarApplication
 import com.footballcalendar.app.ui.theme.AppleDivider
 import com.footballcalendar.app.ui.theme.AppleRed
-import com.footballcalendar.app.ui.theme.AppleRedTint
 import com.footballcalendar.app.ui.theme.InkPrimary
 import com.footballcalendar.app.ui.theme.InkSecondary
 import com.footballcalendar.app.ui.theme.InkTertiary
+import com.footballcalendar.app.ui.theme.ThemeTokens
 
 @Composable
 fun BilingualTextColumn(
@@ -135,19 +136,27 @@ fun PlayerPortrait(
     playerName: String,
     size: Dp = 56.dp,
     modifier: Modifier = Modifier,
+    shirtNumber: Int = 0,
+    teamColor: Color = ThemeTokens.AccentFallback,
 ) {
     val context = LocalContext.current
     val imageLoader = remember(context) {
         (context.applicationContext as FootballCalendarApplication).container.imageLoader
     }
     var loadFailed by remember(url) { mutableStateOf(url.isBlank()) }
+    var isLoaded by remember(url) { mutableStateOf(false) }
+    val showFallbackBadge = !isLoaded || loadFailed || url.isBlank()
 
     Box(
         modifier = modifier
             .size(size)
             .clip(CircleShape)
-            .background(AppleRedTint)
-            .border(1.5.dp, AppleRed.copy(alpha = 0.28f), CircleShape),
+            .background(if (showFallbackBadge) teamColor else ThemeTokens.SurfaceSubtle)
+            .border(
+                width = 1.5.dp,
+                color = if (showFallbackBadge) ThemeTokens.WhiteRingSoft else AppleRed.copy(alpha = 0.28f),
+                shape = CircleShape,
+            ),
         contentAlignment = Alignment.Center,
     ) {
         if (!loadFailed && url.isNotBlank()) {
@@ -161,15 +170,28 @@ fun PlayerPortrait(
                 contentScale = ContentScale.Crop,
                 alignment = Alignment.TopCenter,
                 modifier = Modifier.size(size),
-                onError = { loadFailed = true },
+                onLoading = { isLoaded = false },
+                onSuccess = { isLoaded = true },
+                onError = {
+                    loadFailed = true
+                    isLoaded = false
+                },
             )
-        } else {
-            val initial = playerName.firstOrNull()?.toString() ?: "★"
+        }
+        if (showFallbackBadge) {
+            val badgeText = if (shirtNumber > 0) {
+                shirtNumber.toString()
+            } else {
+                playerName.firstOrNull()?.toString() ?: "★"
+            }
             Text(
-                text = initial,
-                color = AppleRed,
+                text = badgeText,
+                color = ThemeTokens.PureWhite,
                 fontWeight = FontWeight.ExtraBold,
-                fontSize = (size.value * 0.38f).sp,
+                fontSize = (size.value * if (shirtNumber >= 10) 0.36f else 0.40f).sp,
+                style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum"),
+                maxLines = 1,
+                softWrap = false,
             )
         }
     }

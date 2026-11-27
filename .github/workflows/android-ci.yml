@@ -1,0 +1,94 @@
+name: Android CI & Debug APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  python-feed-tests:
+    name: Python Feed Unit Tests & JSON Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate dictionary JSON files
+        run: |
+          python3 -c "
+          import json, glob
+          for path in glob.glob('**/dictionary/*.json', recursive=True) + glob.glob('**/assets/*.json', recursive=True):
+              with open(path, encoding='utf-8') as f:
+                  json.load(f)
+              print('OK:', path)
+          "
+
+      - name: Run Python feed unit tests
+        run: |
+          if [ -d "feed/tests" ]; then
+            python3 -m unittest discover -s feed/tests -v
+          else
+            echo "No feed/tests directory found, skipping."
+          fi
+
+  android-build-and-test:
+    name: Android Unit Tests & Debug APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Setup Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Locate Gradle project & run tests + assembleDebug
+        env:
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+        run: |
+          if [ -f "./gradlew" ]; then
+            PROJECT_DIR="."
+            GRADLE_CMD="./gradlew"
+            chmod +x "$PROJECT_DIR/gradlew"
+          elif [ -f "./android-app/gradlew" ]; then
+            PROJECT_DIR="./android-app"
+            GRADLE_CMD="./gradlew"
+            chmod +x "$PROJECT_DIR/gradlew"
+          elif { [ -f "./settings.gradle.kts" ] || [ -f "./settings.gradle" ]; } && command -v gradle >/dev/null 2>&1; then
+            PROJECT_DIR="."
+            GRADLE_CMD="gradle"
+          else
+            echo "ERROR: gradlew not found and no root settings.gradle(.kts) with gradle CLI available"
+            exit 1
+          fi
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          cd "$PROJECT_DIR"
+          "$GRADLE_CMD" testDebugUnitTest assembleDebug --stacktrace
+
+      - name: Upload Debug APK for Xiaomi Side-load
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-calendar-debug-apk
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            android-app/app/build/outputs/apk/debug/*.apk
+          retention-days: 14

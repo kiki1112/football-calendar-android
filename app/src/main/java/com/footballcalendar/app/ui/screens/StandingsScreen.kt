@@ -59,7 +59,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.footballcalendar.app.model.CompetitionCatalog
 import com.footballcalendar.app.model.MatchItem
-import com.footballcalendar.app.model.MatchStatus
 import com.footballcalendar.app.model.SquadMember
 import com.footballcalendar.app.model.StandingEntry
 import com.footballcalendar.app.model.TeamDetailInfo
@@ -431,12 +430,12 @@ fun TeamDetailBottomSheet(
 
     val recentFinished = remember(matches, team.name) {
         matches
-            .filter { it.status == MatchStatus.FINISHED || (it.homeScore != null && it.awayScore != null && !it.status.isLive) }
+            .filter { it.phase.isFinished || (it.homeScore != null && it.awayScore != null && !it.phase.isLiveOrHalfTime) }
             .sortedByDescending { it.utcDate }
     }
     val upcomingMatches = remember(matches, team.name) {
         matches
-            .filter { it.status != MatchStatus.FINISHED && !it.status.isCancelledOrPostponed && !(it.homeScore != null && it.awayScore != null && !it.status.isLive) }
+            .filter { !it.phase.isFinished && !it.phase.isPostponed && !(it.homeScore != null && it.awayScore != null && !it.phase.isLiveOrHalfTime) }
             .sortedBy { it.utcDate }
     }
 

@@ -3,7 +3,11 @@ package com.footballcalendar.app.data.repository
 import android.content.Context
 import android.util.Log
 import com.footballcalendar.app.data.local.MatchDao
+import com.footballcalendar.app.data.local.MatchDetailDao
+import com.footballcalendar.app.data.local.MatchDetailEntity
 import com.footballcalendar.app.data.local.MatchEntity
+import com.footballcalendar.app.data.local.PlayerDao
+import com.footballcalendar.app.data.local.PlayerEntity
 import com.footballcalendar.app.data.local.StandingDao
 import com.footballcalendar.app.data.local.StandingEntity
 import com.footballcalendar.app.data.local.TeamDao
@@ -24,6 +28,8 @@ import com.footballcalendar.app.model.StandingEntry
 import com.footballcalendar.app.model.StarPlayer
 import com.footballcalendar.app.model.SyncSummary
 import com.footballcalendar.app.model.TeamDetailInfo
+import com.footballcalendar.app.util.CoachResolver
+import com.footballcalendar.app.util.MatchFinalizationPolicy
 import com.footballcalendar.app.util.MatchTimeFormatter
 import com.footballcalendar.app.util.ScheduleDiffEngine
 import com.footballcalendar.app.util.TeamAssetCatalog
@@ -32,8 +38,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
@@ -57,13 +61,19 @@ class FixtureRepository(
     private val matchDao: MatchDao,
     private val standingDao: StandingDao,
     private val teamDao: TeamDao,
+    private val matchDetailDao: MatchDetailDao,
+    private val playerDao: PlayerDao,
     private val prefsRepo: UserPreferencesRepository,
     private val dataSource: FixtureDataSource,
     private val apiService: FeedApiService,
     private val json: Json,
 ) {
-    private val _starPlayers = MutableStateFlow(TeamAssetCatalog.starPlayers)
-    val starPlayersFlow: Flow<List<StarPlayer>> = _starPlayers.asStateFlow()
+    val starPlayersFlow: Flow<List<StarPlayer>> =
+        playerDao.observeAllPlayers()
+            .map { list ->
+                if (list.isNotEmpty()) list.map { it.toDomain() } else TeamAssetCatalog.starPlayers
+            }
+            .flowOn(Dispatchers.IO)
 
     private val liveDetailCache = ConcurrentHashMap<String, LiveMatchDetail>()
     private val espnDirCache = ConcurrentHashMap<String, Pair<String, String>>()
@@ -86,11 +96,41 @@ class FixtureRepository(
 
     fun getCachedLiveDetail(matchId: String): LiveMatchDetail? = liveDetailCache[matchId]
 
+    suspend fun getStoredLiveDetail(matchId: String): LiveMatchDetail? {
+        liveDetailCache[matchId]?.let { return it }
+        return matchDetailDao.getByMatchIdOnce(matchId)?.toDomain(json)?.also {
+            liveDetailCache[matchId] = it
+        }
+    }
+
     fun getCachedH2H(matchId: String): MatchH2HBundle? = h2hCache[matchId]?.second
 
     fun observeAllMatches(): Flow<List<MatchItem>> =
         matchDao.observeAllMatches()
             .map { list -> list.map { it.toDomain() } }
+            .flowOn(Dispatchers.IO)
+
+    fun observeMatchesByDate(
+        dateKey: String,
+        isLotteryOnly: Boolean = false,
+        watchNightGrouping: Boolean = true,
+    ): Flow<List<MatchItem>> =
+        matchDao.observeMatchesByDateMode(
+            dateKey = dateKey,
+            isLotteryOnly = isLotteryOnly,
+            watchNightGrouping = watchNightGrouping,
+        )
+            .map { list -> list.map { it.toDomain() } }
+            .flowOn(Dispatchers.IO)
+
+    fun observeMatchById(matchId: String): Flow<MatchItem?> =
+        matchDao.observeMatchById(matchId)
+            .map { it?.toDomain() }
+            .flowOn(Dispatchers.IO)
+
+    fun observeMatchDetail(matchId: String): Flow<LiveMatchDetail?> =
+        matchDetailDao.observeByMatchId(matchId)
+            .map { entity -> entity?.toDomain(json) }
             .flowOn(Dispatchers.IO)
 
     fun observeAllStandings(): Flow<List<StandingEntry>> =
@@ -102,7 +142,7 @@ class FixtureRepository(
         teamDao.observeAllTeams()
             .map { list ->
                 list.map { te ->
-                    val sig = ((te.squadJson.hashCode() * 31) + te.espnTeamId.hashCode()) * 31 + te.crest.hashCode()
+                    val sig = ((((te.squadJson.hashCode() * 31) + te.espnTeamId.hashCode()) * 31 + te.crest.hashCode()) * 31 + te.coachName.hashCode()) * 31 + te.coachZhName.hashCode()
                     val cached = teamDecodeCache[te.keyName]
                     if (cached != null && cached.first == sig) {
                         cached.second
@@ -120,15 +160,36 @@ class FixtureRepository(
         var shouldRemoteSync = false
         seedMutex.withLock {
             val prefs = prefsRepo.currentPreferences()
-            val hasMatches = matchDao.getAllMatchesOnce().isNotEmpty()
+            val storedMatches = matchDao.getAllMatchesOnce()
+            val hasMatches = storedMatches.isNotEmpty()
             val hasStandings = standingDao.getAllStandingsOnce().isNotEmpty()
             val hasTeams = teamDao.getAllTeamsOnce().isNotEmpty()
+            val hasPlayers = playerDao.getAllPlayersOnce().isNotEmpty()
+            val existingDetailIds = matchDetailDao.getAllMatchIdsOnce().toSet()
+
             if (!hasMatches || !hasStandings || !hasTeams) {
                 seedFromBundledAsset(prefs.followedCompetitions, prefs.dataSourceMode, populateDb = true)
                 shouldRemoteSync = true
-            } else if (_starPlayers.value.size <= 25) {
-                // Fast 0ms warm-start hydration of ranked players & pre-cached match details from bundled snapshot
-                seedFromBundledAsset(prefs.followedCompetitions, prefs.dataSourceMode, populateDb = false)
+            } else {
+                if (!hasPlayers || existingDetailIds.isEmpty()) {
+                    seedFromBundledAsset(prefs.followedCompetitions, prefs.dataSourceMode, populateDb = false)
+                }
+                val afterSeedDetailIds = matchDetailDao.getAllMatchIdsOnce().toSet()
+                val staleRows = storedMatches.filter { entity ->
+                    entity.watchNightDateKey.isBlank() ||
+                        entity.localDateKey.isBlank() ||
+                        (!entity.isFinalized && entity.id in afterSeedDetailIds && entity.toDomain().phase.isFinished)
+                }
+                if (staleRows.isNotEmpty()) {
+                    matchDao.upsertAll(
+                        staleRows.map { entity ->
+                            MatchEntity.fromDomain(
+                                item = entity.toDomain(),
+                                hasLocalSnapshot = entity.id in afterSeedDetailIds,
+                            )
+                        },
+                    )
+                }
             }
         }
         if (shouldRemoteSync) {
@@ -164,15 +225,32 @@ class FixtureRepository(
                 "seed decoded in ${System.currentTimeMillis() - t0}ms (matches=${payload.matches.size}, standings=${payload.standings.size}, teams=${payload.teams.size})",
             )
             if (payload.players.isNotEmpty()) {
-                _starPlayers.value = payload.players
+                if (populateDb || playerDao.getAllPlayersOnce().isEmpty()) {
+                    playerDao.replaceAll(payload.players.mapIndexed { idx, p -> PlayerEntity.fromDomain(p, idx) })
+                }
                 payload.players.forEach { p ->
                     if (p.portraitUrl.isNotBlank()) wikiPortraitCache[p.name.lowercase()] = p.portraitUrl
                 }
             }
             if (payload.liveDetails.isNotEmpty()) {
                 liveDetailCache.putAll(payload.liveDetails)
+                val existingIds = matchDetailDao.getAllMatchIdsOnce().toSet()
+                val missingDetails = payload.liveDetails.values
+                    .filter { populateDb || it.matchId !in existingIds }
+                    .map { MatchDetailEntity.fromDomain(it, json) }
+                if (missingDetails.isNotEmpty()) {
+                    matchDetailDao.upsertAll(missingDetails)
+                }
             }
-            payload.teams.forEach { td ->
+            val authoritativeDetails = if (populateDb) {
+                payload.liveDetails
+            } else {
+                matchDetailDao.getAllOnce().associate { it.matchId to it.toDomain(json) } + payload.liveDetails
+            }
+            val normalizedTeams = payload.teams.map { td ->
+                CoachResolver.applyAuthoritativeCoach(td, payload.matches, authoritativeDetails)
+            }
+            normalizedTeams.forEach { td ->
                 if (td.espnTeamId.isNotBlank() && td.espnSlug.isNotBlank()) {
                     indexEspnTeamRef(td.name, td.zhName, td.espnSlug, td.espnTeamId)
                 }
@@ -186,8 +264,13 @@ class FixtureRepository(
                 }
             }
             if (populateDb) {
+                val snapshotIds = payload.liveDetails.keys
                 if (payload.matches.isNotEmpty()) {
-                    matchDao.replaceAll(payload.matches.map { MatchEntity.fromDomain(it) })
+                    matchDao.replaceAll(
+                        payload.matches.map {
+                            MatchEntity.fromDomain(it, hasLocalSnapshot = it.id in snapshotIds)
+                        },
+                    )
                 }
                 if (payload.standings.isNotEmpty()) {
                     standingDao.replaceAll(payload.standings.map { StandingEntity.fromDomain(it) })
@@ -203,8 +286,8 @@ class FixtureRepository(
                         standingsSyncedAtMillis = System.currentTimeMillis(),
                     )
                 }
-                if (payload.teams.isNotEmpty()) {
-                    teamDao.replaceAll(payload.teams.map { TeamEntity.fromDomain(it, json) })
+                if (normalizedTeams.isNotEmpty()) {
+                    teamDao.replaceAll(normalizedTeams.map { TeamEntity.fromDomain(it, json) })
                 }
                 Log.i("FixtureRepository", "seed DB populated in ${System.currentTimeMillis() - t0}ms")
             }
@@ -235,7 +318,18 @@ class FixtureRepository(
                 zoneId = zoneId,
             )
 
-            matchDao.replaceAll(diffResult.mergedMatches.map { MatchEntity.fromDomain(it) })
+            if (payload.liveDetails.isNotEmpty()) {
+                liveDetailCache.putAll(payload.liveDetails)
+                matchDetailDao.upsertAll(
+                    payload.liveDetails.values.map { MatchDetailEntity.fromDomain(it, json) },
+                )
+            }
+            val detailIds = matchDetailDao.getAllMatchIdsOnce().toSet()
+            matchDao.replaceAll(
+                diffResult.mergedMatches.map {
+                    MatchEntity.fromDomain(it, hasLocalSnapshot = it.id in detailIds)
+                },
+            )
 
             var standingsSyncedMillis: Long? = null
             if (payload.standings.isNotEmpty()) {
@@ -250,12 +344,18 @@ class FixtureRepository(
             }
 
             if (payload.teams.isNotEmpty()) {
-                val tSig = payload.teams.size * 31 + payload.teams.sumOf { it.squad.size * 13 + it.zhName.hashCode() }
+                val storedDetails = matchDetailDao.getAllOnce().associate { it.matchId to it.toDomain(json) }
+                val resolvedTeams = payload.teams.map { td ->
+                    CoachResolver.applyAuthoritativeCoach(td, diffResult.mergedMatches, storedDetails)
+                }
+                val tSig = resolvedTeams.size * 31 + resolvedTeams.sumOf {
+                    it.squad.size * 13 + it.zhName.hashCode() + it.coachName.hashCode() * 7 + it.coachZhName.hashCode()
+                }
                 if (modeChanged || tSig != lastTeamsSignature || teamDao.getAllTeamsOnce().isEmpty()) {
-                    teamDao.replaceAll(payload.teams.map { TeamEntity.fromDomain(it, json) })
+                    teamDao.replaceAll(resolvedTeams.map { TeamEntity.fromDomain(it, json) })
                     lastTeamsSignature = tSig
                 }
-                payload.teams.forEach { td ->
+                resolvedTeams.forEach { td ->
                     if (td.espnTeamId.isNotBlank() && td.espnSlug.isNotBlank()) {
                         indexEspnTeamRef(td.name, td.zhName, td.espnSlug, td.espnTeamId)
                     }
@@ -273,13 +373,10 @@ class FixtureRepository(
             }
 
             if (payload.players.isNotEmpty()) {
-                _starPlayers.value = payload.players
+                playerDao.replaceAll(payload.players.mapIndexed { idx, p -> PlayerEntity.fromDomain(p, idx) })
                 payload.players.forEach { p ->
                     if (p.portraitUrl.isNotBlank()) wikiPortraitCache[p.name.lowercase()] = p.portraitUrl
                 }
-            }
-            if (payload.liveDetails.isNotEmpty()) {
-                liveDetailCache.putAll(payload.liveDetails)
             }
 
             val nowIso = DateTimeFormatter.ISO_INSTANT.format(Instant.now())
@@ -391,7 +488,12 @@ class FixtureRepository(
             }
 
             if (changedItems.isNotEmpty()) {
-                matchDao.upsertAll(changedItems.distinctBy { it.id }.map { MatchEntity.fromDomain(it) })
+                val existingDetailIds = matchDetailDao.getAllMatchIdsOnce().toSet()
+                matchDao.upsertAll(
+                    changedItems.distinctBy { it.id }.map {
+                        MatchEntity.fromDomain(it, hasLocalSnapshot = it.id in existingDetailIds)
+                    },
+                )
             }
 
             val alerts = mutableListOf<LiveBroadcastAlert>()
@@ -512,12 +614,26 @@ class FixtureRepository(
     suspend fun fetchMatchLiveDetail(match: MatchItem, forceRefresh: Boolean = false): Result<LiveMatchDetail> {
         return runCatching {
             val cached = liveDetailCache[match.id]
+                ?: matchDetailDao.getByMatchIdOnce(match.id)?.toDomain(json)?.also {
+                    liveDetailCache[match.id] = it
+                }
             val nowMs = System.currentTimeMillis()
             if (!forceRefresh && cached != null) {
-                val isFinished = cached.statusShort == MatchStatus.FINISHED.name || match.status == MatchStatus.FINISHED
-                if (isFinished || (nowMs - cached.syncedAtMillis) < 8_000L) {
+                val isFinished = cached.statusShort == MatchStatus.FINISHED.name || match.phase.isFinished
+                if (isFinished || match.isFinalized || (nowMs - cached.syncedAtMillis) < 8_000L) {
                     return@runCatching cached
                 }
+            }
+            if (!forceRefresh && match.isFinalized && cached == null) {
+                return@runCatching LiveMatchDetail(
+                    matchId = match.id,
+                    fixtureId = match.apiFootballFixtureId ?: 0,
+                    elapsedMinutes = match.elapsedMinutes,
+                    statusShort = match.status.name,
+                    homeScore = match.homeScore,
+                    awayScore = match.awayScore,
+                    syncedAtMillis = nowMs,
+                )
             }
 
             // 1. Try ESPN Summary (Free, zero quota, works for BOTH live and historical matches)
@@ -588,6 +704,7 @@ class FixtureRepository(
                 if (rawEspnDetail != null) {
                     val espnDetail = enrichDetailLineupPortraits(rawEspnDetail)
                     liveDetailCache[match.id] = espnDetail
+                    matchDetailDao.upsert(MatchDetailEntity.fromDomain(espnDetail, json))
                     persistDetailOntoMatch(match.id, espnDetail, espnSlug = targetSlug, espnEventId = targetEventId)
                     return@runCatching espnDetail
                 }
@@ -636,6 +753,7 @@ class FixtureRepository(
             val row = detailResp.response.firstOrNull() ?: error("暂无比赛过程详情")
             val detail = enrichDetailLineupPortraits(row.toLiveDetail(match.id))
             liveDetailCache[match.id] = detail
+            matchDetailDao.upsert(MatchDetailEntity.fromDomain(detail, json))
             persistDetailOntoMatch(match.id, detail, afFixtureId = targetFixtureId)
             detail
         }
@@ -660,7 +778,23 @@ class FixtureRepository(
             espnEventId = espnEventId ?: cur.espnEventId,
             apiFootballFixtureId = afFixtureId ?: cur.apiFootballFixtureId,
         )
-        matchDao.upsertAll(listOf(MatchEntity.fromDomain(updated)))
+        matchDao.upsertAll(listOf(MatchEntity.fromDomain(updated, hasLocalSnapshot = true)))
+
+        if (detail.lineups.any { it.coachName.isNotBlank() || it.coachZhName.isNotBlank() }) {
+            val storedTeams = teamDao.getAllTeamsOnce().map { it.toDomain(json) }
+            val updatedMatches = all.map { if (it.id == matchId) updated else it }
+            val detailMap = mapOf(matchId to detail)
+            val refreshedTeams = listOfNotNull(
+                findMatchingTeam(storedTeams, updated.homeTeamName, updated.homeTeamZhName),
+                findMatchingTeam(storedTeams, updated.awayTeamName, updated.awayTeamZhName),
+            ).distinctBy { it.name }.mapNotNull { team ->
+                val resolved = CoachResolver.applyAuthoritativeCoach(team, updatedMatches, detailMap)
+                resolved.takeIf { it != team }
+            }
+            if (refreshedTeams.isNotEmpty()) {
+                teamDao.upsertAll(refreshedTeams.map { TeamEntity.fromDomain(it, json) })
+            }
+        }
     }
 
     suspend fun fetchTeamHistoryAndDetail(
@@ -721,7 +855,24 @@ class FixtureRepository(
                     resolved
                 }
 
-                detailDeferred.await() to historyDeferred.await()
+                val teamHistory = historyDeferred.await()
+                val rawTeam = detailDeferred.await()
+                val authoritativeTeam = if (rawTeam != null) {
+                    val storedDetails = matchDetailDao.getAllOnce().associate { it.matchId to it.toDomain(json) } +
+                        liveDetailCache
+                    val fixed = CoachResolver.applyAuthoritativeCoach(
+                        team = rawTeam,
+                        matches = teamHistory,
+                        detailsByMatchId = storedDetails,
+                    )
+                    if (fixed != rawTeam) {
+                        runCatching { teamDao.upsertAll(listOf(TeamEntity.fromDomain(fixed, json))) }
+                    }
+                    fixed
+                } else {
+                    null
+                }
+                authoritativeTeam to teamHistory
             }
         }
     }
@@ -818,7 +969,8 @@ class FixtureRepository(
         }
         if (newPortrait == player.portraitUrl && newBio == player.bio) return player
         val updated = player.copy(portraitUrl = newPortrait, bio = newBio)
-        _starPlayers.value = _starPlayers.value.map { if (it.id == player.id) updated else it }
+        val existingIdx = playerDao.getAllPlayersOnce().indexOfFirst { it.id == player.id }.let { if (it >= 0) it else 9999 }
+        playerDao.upsert(PlayerEntity.fromDomain(updated, existingIdx))
         return updated
     }
 
@@ -903,9 +1055,10 @@ class FixtureRepository(
             val infoResp = runCatching {
                 apiService.fetchApiFootballTeamInfo("https://v3.football.api-sports.io/teams?id=$teamId", afKey)
             }.getOrNull()?.response?.firstOrNull()
-            val coachName = runCatching {
+            val afCoaches = runCatching {
                 apiService.fetchApiFootballCoaches("https://v3.football.api-sports.io/coachs?team=$teamId", afKey)
-            }.getOrNull()?.response?.firstOrNull()?.name ?: ""
+            }.getOrNull()?.response.orEmpty()
+            val resolvedCoach = CoachResolver.selectActiveApiFootballCoach(afCoaches, teamId)
             val squadResp = runCatching {
                 apiService.fetchApiFootballSquad("https://v3.football.api-sports.io/players/squads?team=$teamId", afKey)
             }.getOrNull()?.response?.firstOrNull()?.players.orEmpty()
@@ -921,9 +1074,10 @@ class FixtureRepository(
                     venue = infoResp?.venue?.name ?: "",
                     founded = infoResp?.team?.founded ?: 0,
                     clubColors = "",
-                    coachName = coachName,
-                    coachZhName = TeamLocalization.localizeCoach(coachName),
+                    coachName = resolvedCoach?.name.orEmpty(),
+                    coachZhName = resolvedCoach?.zhName.orEmpty(),
                     coachNationality = "",
+                    coachPortraitUrl = resolvedCoach?.portraitUrl.orEmpty(),
                     squad = squadResp.map { p ->
                         val (zh, tr) = TeamLocalization.localizePlayer(p.name)
                         SquadMember(
@@ -1307,7 +1461,8 @@ class FixtureRepository(
         val cleaned = query.trim()
         if (cleaned.isEmpty()) return Result.success(null)
 
-        val localHit = _starPlayers.value.firstOrNull {
+        val currentPlayers = playerDao.getAllPlayersOnce().map { it.toDomain() }.ifEmpty { TeamAssetCatalog.starPlayers }
+        val localHit = currentPlayers.firstOrNull {
             it.zhName.contains(cleaned, ignoreCase = true) ||
                 it.name.contains(cleaned, ignoreCase = true)
         }
@@ -1339,7 +1494,7 @@ class FixtureRepository(
                         portraitUrl = zhSummary.thumbnail?.source ?: "",
                         bio = zhSummary.extract,
                     ).also { created ->
-                        _starPlayers.value = (_starPlayers.value + created).distinctBy { it.id }
+                        playerDao.upsert(PlayerEntity.fromDomain(created, 9999))
                     }
                 }
             }
@@ -1393,7 +1548,7 @@ class FixtureRepository(
                 bio = displayBio,
                 isTransliterated = tr && zhTitle.isNullOrBlank(),
             )
-            _starPlayers.value = (_starPlayers.value + created).distinctBy { it.id }
+            playerDao.upsert(PlayerEntity.fromDomain(created, 9999))
             created
         }
     }

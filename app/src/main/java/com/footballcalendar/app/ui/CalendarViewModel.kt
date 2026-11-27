@@ -24,18 +24,25 @@ import com.footballcalendar.app.model.SquadMember
 import com.footballcalendar.app.model.StandingEntry
 import com.footballcalendar.app.model.StarPlayer
 import com.footballcalendar.app.model.TeamDetailInfo
+import com.footballcalendar.app.util.CoachResolver
+import com.footballcalendar.app.util.DetailPollingPolicy
+import com.footballcalendar.app.util.DetailStreamController
 import com.footballcalendar.app.util.IcsExporter
 import com.footballcalendar.app.util.MatchTimeFormatter
 import com.footballcalendar.app.util.TeamAssetCatalog
 import com.footballcalendar.app.util.TeamLocalization
 import com.footballcalendar.app.widget.NextMatchWidgetProvider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -230,14 +237,38 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
         )
     }.flowOn(Dispatchers.Default)
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val selectedDayRoomFlow = combine(
+        uiInteraction.map { it.selectedDate }.distinctUntilChanged(),
+        prefsRepo.preferencesFlow.map { it.watchNightGrouping }.distinctUntilChanged(),
+    ) { date, watchNightGrouping ->
+        date.toString() to watchNightGrouping
+    }.distinctUntilChanged().flatMapLatest { (dateKey, watchNightGrouping) ->
+        fixtureRepo.observeMatchesByDate(
+            dateKey = dateKey,
+            isLotteryOnly = false,
+            watchNightGrouping = watchNightGrouping,
+        )
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val selectedMatchDetailRoomFlow = uiInteraction
+        .map { it.selectedMatchDetail?.id }
+        .distinctUntilChanged()
+        .flatMapLatest { matchId ->
+            if (matchId == null) flowOf(null) else fixtureRepo.observeMatchDetail(matchId)
+        }
+
     val uiState: StateFlow<CalendarUiState> = combine(
         precomputedCoreFlow,
+        selectedDayRoomFlow,
+        selectedMatchDetailRoomFlow,
         prefsRepo.preferencesFlow,
         uiInteraction,
-    ) { core, prefs, ui ->
+    ) { core, roomDayMatches, roomMatchDetail, prefs, ui ->
         val allMatches = core.matches
         val zoneId = MatchTimeFormatter.BEIJING_ZONE
-        val filtered = allMatches.filter { match ->
+        fun matchAllowed(match: MatchItem): Boolean {
             val leagueAllowed = match.competitionCode in prefs.followedCompetitions
             val chipAllowed = when (ui.selectedLeagueFilter) {
                 null -> true
@@ -249,8 +280,10 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
                 2 -> match.id in prefs.watchlistMatchIds
                 else -> true
             }
-            leagueAllowed && chipAllowed && tabAllowed
+            return leagueAllowed && chipAllowed && tabAllowed
         }
+
+        val filtered = allMatches.filter(::matchAllowed)
 
         val grouped = filtered.groupBy { match ->
             MatchTimeFormatter.displayDateFor(
@@ -260,11 +293,14 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
             ) ?: LocalDate.now(zoneId)
         }
 
-        val dayMatches = grouped[ui.selectedDate].orEmpty().sortedBy { it.utcDate }
+        val dayMatches = roomDayMatches
+            .filter(::matchAllowed)
+            .ifEmpty { grouped[ui.selectedDate].orEmpty() }
+            .sortedBy { it.utcDate }
 
         val now = Instant.now().minusSeconds(1800)
         val upcomingFollowed = allMatches.filter { match ->
-            !match.status.isCancelledOrPostponed &&
+            !match.phase.isPostponed &&
                 match.competitionCode in prefs.followedCompetitions &&
                 (MatchTimeFormatter.parseInstant(match.utcDate)?.isAfter(now) == true)
         }.sortedBy { it.utcDate }
@@ -273,9 +309,22 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
             ?: upcomingFollowed.firstOrNull { it.involvesAnyTeam(prefs.favoriteTeams) }
             ?: upcomingFollowed.firstOrNull()
 
-        // Sync selectedMatchDetail if scores were refreshed in Room
+        // Sync selectedMatchDetail if scores/finalization were refreshed in Room
         val latestSelectedMatch = ui.selectedMatchDetail?.let { sel ->
             allMatches.firstOrNull { it.id == sel.id } ?: sel
+        }
+        val latestLiveDetail = roomMatchDetail ?: ui.selectedMatchLiveDetail
+        val latestSelectedTeam = ui.selectedTeamDetail?.let { sel ->
+            val roomTeam = core.teamsMap[sel.name.lowercase()] ?: core.teamsMap[sel.zhName]
+            if (roomTeam != null && (roomTeam.squad.isNotEmpty() || sel.squad.isEmpty())) {
+                CoachResolver.applyAuthoritativeCoach(
+                    team = roomTeam,
+                    matches = allMatches,
+                    detailsByMatchId = latestLiveDetail?.let { mapOf(it.matchId to it) }.orEmpty(),
+                )
+            } else {
+                sel
+            }
         }
 
         CalendarUiState(
@@ -295,7 +344,7 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
             teamsByName = core.teamsMap,
             allTeams = core.allTeams,
             selectedStandingsLeague = ui.selectedStandingsLeague,
-            selectedTeamDetail = ui.selectedTeamDetail,
+            selectedTeamDetail = latestSelectedTeam,
             selectedTeamHistory = ui.selectedTeamHistory,
             isLoadingTeamDetail = ui.isLoadingTeamDetail,
             isLoadingTeamHistory = ui.isLoadingTeamHistory,
@@ -310,7 +359,7 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
             bannerMessage = ui.bannerMessage,
             liveBroadcastAlert = ui.liveBroadcastAlert,
             selectedMatchDetail = latestSelectedMatch,
-            selectedMatchLiveDetail = ui.selectedMatchLiveDetail,
+            selectedMatchLiveDetail = latestLiveDetail,
             selectedMatchH2H = ui.selectedMatchH2H,
             isLoadingMatchDetail = ui.isLoadingMatchDetail,
             isLoadingMatchH2H = ui.isLoadingMatchH2H,
@@ -387,7 +436,7 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
 
         val cached = fixtureRepo.getCachedLiveDetail(match.id)
         val cachedH2H = fixtureRepo.getCachedH2H(match.id)
-        val shouldSync = shouldAutoSyncDetail(match)
+        val shouldSync = shouldAutoSyncDetail(match, hasLocalSnapshot = cached != null)
         uiInteraction.update {
             it.copy(
                 selectedTeamDetail = null,
@@ -401,15 +450,46 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
                 isLoadingMatchDetail = cached == null && shouldSync,
                 isLoadingMatchH2H = cachedH2H == null,
                 canNavigateBackModal = modalStack.size > 1,
-                matchDetailNote = if (cached == null && !shouldSync) {
-                    "已接入 ESPN 与 API-Football 零延迟引擎 · 开赛前约 45 分钟自动同步首发阵容与实时事件"
-                } else {
-                    null
+                matchDetailNote = when {
+                    match.isFinalized || (match.phase.isFinished && !shouldSync) -> {
+                        if (cached != null && cached.commentary.isEmpty()) "本场暂无文字直播记录" else null
+                    }
+                    cached == null && !shouldSync -> {
+                        "已接入 ESPN 与 API-Football 零延迟引擎 · 开赛前约 45 分钟自动同步首发阵容与实时事件"
+                    }
+                    else -> null
                 },
             )
         }
         if (shouldSync) {
-            startDetailStream(match)
+            startDetailStream(match, hasLocalSnapshot = cached != null)
+        } else if (cached == null) {
+            viewModelScope.launch {
+                val stored = withContext(Dispatchers.IO) {
+                    fixtureRepo.getStoredLiveDetail(match.id)
+                }
+                uiInteraction.update { st ->
+                    if (st.selectedMatchDetail?.id != match.id) return@update st
+                    val resolvedDetail = stored ?: st.selectedMatchLiveDetail
+                    st.copy(
+                        selectedMatchLiveDetail = resolvedDetail,
+                        isLoadingMatchDetail = false,
+                        matchDetailNote = when {
+                            match.isFinalized || match.phase.isFinished -> {
+                                if (resolvedDetail == null || resolvedDetail.commentary.isEmpty()) {
+                                    "本场暂无文字直播记录"
+                                } else {
+                                    null
+                                }
+                            }
+                            resolvedDetail == null -> {
+                                "已接入 ESPN 与 API-Football 零延迟引擎 · 开赛前约 45 分钟自动同步首发阵容与实时事件"
+                            }
+                            else -> null
+                        },
+                    )
+                }
+            }
         }
         startMatchH2HLoad(match)
     }
@@ -431,39 +511,22 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    private fun shouldAutoSyncDetail(match: MatchItem): Boolean {
-        if (match.status.isLive || match.status == MatchStatus.FINISHED ||
-            match.espnEventId != null || match.apiFootballFixtureId != null
-        ) {
-            return true
-        }
-        val ko = MatchTimeFormatter.parseInstant(match.utcDate) ?: return false
-        val mins = Duration.between(ko, Instant.now()).toMinutes()
-        return mins in -75..210
-    }
+    private fun shouldAutoSyncDetail(match: MatchItem, hasLocalSnapshot: Boolean = false): Boolean =
+        DetailPollingPolicy.shouldStartPolling(
+            match = match,
+            hasLocalSnapshot = hasLocalSnapshot,
+        )
 
-    private fun startDetailStream(initialMatch: MatchItem) {
+    private fun startDetailStream(initialMatch: MatchItem, hasLocalSnapshot: Boolean = false) {
         detailPollingJob?.cancel()
-        detailPollingJob = viewModelScope.launch {
-            fetchAndApplyMatchDetail(initialMatch, force = false)
-            while (isActive) {
-                val currentMatch = uiState.value.selectedMatchDetail ?: break
-                val currentDetail = uiInteraction.value.selectedMatchLiveDetail
-                val hasCompleteFinal = currentMatch.status == MatchStatus.FINISHED &&
-                    currentDetail != null &&
-                    (currentDetail.events.isNotEmpty() || currentDetail.lineups.isNotEmpty() || currentDetail.stats.isNotEmpty())
-                if (hasCompleteFinal) break
-
-                val ko = MatchTimeFormatter.parseInstant(currentMatch.utcDate)
-                val inLiveOrLineupWindow = currentMatch.status.isLive ||
-                    (ko != null && Duration.between(ko, Instant.now()).toMinutes() in -60..195)
-                if (!inLiveOrLineupWindow) break
-
-                delay(if (currentMatch.status.isLive) 4_000L else 10_000L)
-                val targetMatch = uiState.value.selectedMatchDetail ?: break
-                fetchAndApplyMatchDetail(targetMatch, force = true)
-            }
-        }
+        detailPollingJob = DetailStreamController.launchIfNeeded(
+            scope = viewModelScope,
+            initialMatch = initialMatch,
+            hasLocalSnapshot = hasLocalSnapshot,
+            currentMatchProvider = { uiState.value.selectedMatchDetail },
+            currentDetailProvider = { uiInteraction.value.selectedMatchLiveDetail },
+            fetchAndApply = { target, force -> fetchAndApplyMatchDetail(target, force) },
+        )
     }
 
     private suspend fun fetchAndApplyMatchDetail(match: MatchItem, force: Boolean) {
@@ -473,28 +536,37 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
         result.onSuccess { detail ->
             uiInteraction.update {
                 if (it.selectedMatchDetail?.id != match.id) return@update it
+                val curMatch = uiState.value.selectedMatchDetail ?: match
+                val noLongerPolling = !DetailPollingPolicy.shouldContinuePolling(curMatch, detail)
                 it.copy(
                     selectedMatchLiveDetail = detail,
                     isLoadingMatchDetail = false,
-                    matchDetailNote = if (
+                    matchDetailNote = when {
+                        (curMatch.isFinalized || curMatch.phase.isFinished || noLongerPolling) && detail.commentary.isEmpty() -> {
+                            "本场暂无文字直播记录"
+                        }
                         detail.events.isEmpty() &&
-                        detail.lineups.isEmpty() &&
-                        detail.stats.isEmpty() &&
-                        detail.commentary.isEmpty()
-                    ) {
-                        "已连接实时数据流（4秒自动轮询）：当前暂无事件记录（赛前约 45 分钟公布首发）"
-                    } else {
-                        null
+                            detail.lineups.isEmpty() &&
+                            detail.stats.isEmpty() &&
+                            detail.commentary.isEmpty() -> {
+                            "已连接实时数据流：当前暂无事件记录（赛前约 45 分钟公布首发）"
+                        }
+                        else -> null
                     },
                 )
             }
         }.onFailure { err ->
             uiInteraction.update {
                 if (it.selectedMatchDetail?.id != match.id) return@update it
+                val curMatch = uiState.value.selectedMatchDetail ?: match
                 it.copy(
                     isLoadingMatchDetail = false,
                     matchDetailNote = if (it.selectedMatchLiveDetail == null) {
-                        err.message ?: "暂无实时赛况详情"
+                        if (curMatch.isFinalized || curMatch.phase.isFinished) {
+                            "本场暂无文字直播记录"
+                        } else {
+                            err.message ?: "暂无实时赛况详情"
+                        }
                     } else {
                         it.matchDetailNote
                     },
@@ -908,13 +980,15 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
                         }
                         NextMatchWidgetProvider.updateAllWidgets(getApplication())
                     }
-                    val hasLive = uiState.value.filteredMatches.any { it.status.isLive }
+                    val hasLive = uiState.value.filteredMatches.any { it.phase.isLiveOrHalfTime }
                     delay(if (hasLive) 8_000L else 15_000L)
                 }
             }
             uiState.value.selectedMatchDetail?.let { openMatch ->
-                if (detailPollingJob?.isActive != true && shouldAutoSyncDetail(openMatch)) {
-                    startDetailStream(openMatch)
+                val hasSnap = uiState.value.selectedMatchLiveDetail != null ||
+                    fixtureRepo.getCachedLiveDetail(openMatch.id) != null
+                if (detailPollingJob?.isActive != true && shouldAutoSyncDetail(openMatch, hasLocalSnapshot = hasSnap)) {
+                    startDetailStream(openMatch, hasLocalSnapshot = hasSnap)
                 }
             }
         } else {
