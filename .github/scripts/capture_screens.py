@@ -283,22 +283,50 @@ def main() -> int:
     # Scroll HeroNextMatchCard (1s countdown ticker) off-screen so UIAutomator hits 50ms idle dumps!
     swipe_up(w, h, dist_ratio=0.45, wait_s=1.0)
 
-    # 2. Switch calendar date to 25 (Nov 25 Beijing Watch-Night: 43 rich finished matches!)
+    # 2. Switch calendar date to 25 (Nov 25 Beijing Watch-Night: 43-44 matches incl. UCL!)
     if not tap_match(exact="25", min_y=int(h * 0.15), max_y=int(h * 0.85), prefer_last=True, wait_s=1.8):
         tap_xy(int(w * 0.375), int(h * 0.333), "fallback_date_25", wait_s=1.8)
-    swipe_up(w, h, dist_ratio=0.22, wait_s=1.4)
+    swipe_up(w, h, dist_ratio=0.22, wait_s=1.2)
     screencap(out_dir, "02_calendar_day_matches.png")
 
-    # 3. Tap the SCORE CENTER (":") of the first finished match card -> opens MatchDetailBottomSheet (图二: 赛况时间轴)
-    if not tap_match(
-        contains=":",
-        min_x=int(w * 0.38),
-        max_x=int(w * 0.62),
-        min_y=int(h * 0.45),
-        max_y=int(h * 0.86),
-        wait_s=2.8,
-    ):
-        tap_xy(w // 2, int(h * 0.57), "fallback_match_score_center", wait_s=2.8)
+    # Fast-scroll down Nov 25 to reach rich UCL blockbusters (idx 30..38: 巴塞罗那 / 利物浦 / 曼联 / 国际米兰 / 拜仁慕尼黑)
+    for _ in range(11):
+        swipe_up(w, h, dist_ratio=0.72, wait_s=0.35)
+    target_y = None
+    ucl_teams = ("巴塞罗那", "拜仁慕尼黑", "国际米兰", "巴黎圣日耳曼", "利物浦", "曼联")
+    for _ in range(8):
+        nodes = dump_nodes()
+        for tname in ucl_teams:
+            n = find_node(nodes, contains=tname, min_y=int(h * 0.22), max_y=int(h * 0.72))
+            if n:
+                target_y = int(n["cy"])
+                print(f"[found ucl] {tname} at y={target_y}")
+                break
+        if target_y is not None:
+            break
+        swipe_up(w, h, dist_ratio=0.48, wait_s=0.8)
+
+    # 3. Tap the SCORE CENTER (":") on the same horizontal row as the UCL team -> opens MatchDetailBottomSheet (图二: 赛况时间轴)
+    if target_y is not None:
+        if not tap_match(
+            contains=":",
+            min_x=int(w * 0.38),
+            max_x=int(w * 0.62),
+            min_y=max(int(h * 0.16), target_y - 110),
+            max_y=min(int(h * 0.85), target_y + 110),
+            wait_s=2.8,
+        ):
+            tap_xy(w // 2, target_y, "fallback_ucl_score_center", wait_s=2.8)
+    else:
+        if not tap_match(
+            contains=":",
+            min_x=int(w * 0.38),
+            max_x=int(w * 0.62),
+            min_y=int(h * 0.35),
+            max_y=int(h * 0.85),
+            wait_s=2.8,
+        ):
+            tap_xy(w // 2, int(h * 0.55), "fallback_match_score_center", wait_s=2.8)
 
     # Wait until ModalBottomSheet finishes opening & shows Sticky Sub-Tabs ("阵容")
     for _ in range(8):
@@ -338,10 +366,9 @@ def main() -> int:
         tap_xy(int(w * 0.72), int(h * 0.375), "fallback_player_stats_pill", wait_s=2.2)
     screencap(out_dir, "08_match_stats_players.png")
 
-    # 7. Switch to 交锋积分 Tab (already at top)
-    if not tap_match(exact="交锋积分", min_y=int(h * 0.15), max_y=int(h * 0.45), wait_s=2.5):
-        tap_xy(int(w * 0.875), int(h * 0.296), "fallback_h2h_tab", wait_s=2.5)
-    swipe_down(w, h, dist_ratio=0.45, wait_s=1.2)
+    # 7. Switch to 交锋积分 Tab (LazyColumn already scrolled back to top — never swipe_down here or sheet dismisses!)
+    if not tap_match(exact="交锋积分", min_y=int(h * 0.15), max_y=int(h * 0.45), wait_s=2.8):
+        tap_xy(int(w * 0.875), int(h * 0.296), "fallback_h2h_tab", wait_s=2.8)
     screencap(out_dir, "09_match_h2h_standings.png")
 
     # Dismiss popup modal back to Home Calendar
