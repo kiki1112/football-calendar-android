@@ -442,8 +442,8 @@ private fun HeroNextMatchCard(
         else -> "下一场焦点大战"
     }
 
-    val homeHeroRaw = TeamColorRegistry.schemeFor(match.homeTeamName, match.homeTeamZhName).primary
-    val awayHeroRaw = TeamColorRegistry.schemeFor(match.awayTeamName, match.awayTeamZhName).primary
+    val homeHeroRaw = TeamColorRegistry.resolveScheme(match.homeTeamName, match.homeTeamZhName).primary
+    val awayHeroRaw = TeamColorRegistry.resolveScheme(match.awayTeamName, match.awayTeamZhName).primary
     val homeHeroColor = remember(homeHeroRaw) {
         if (homeHeroRaw.luminance() > 0.45f) lerp(homeHeroRaw, ThemeTokens.InkPrimary, 0.34f) else homeHeroRaw
     }
@@ -838,7 +838,7 @@ private fun AppleMatchCard(
     val phase = match.phase
     val phaseLabels = remember(phase) { MatchPhaseFormatter.formatLabels(phase) }
     val homeStripeColor = remember(match.homeTeamName, match.homeTeamZhName) {
-        TeamColorRegistry.schemeFor(match.homeTeamName, match.homeTeamZhName).primary
+        TeamColorRegistry.resolveScheme(match.homeTeamName, match.homeTeamZhName).primary
     }
 
     // Pure white #FFFFFF borderless card floating over CanvasPearl #F8F9FB, accented with a 3.dp
@@ -1290,10 +1290,10 @@ fun MatchDetailBottomSheet(
     val phaseLabels = MatchPhaseFormatter.formatLabels(effectivePhase)
     val headerStatusBadge = phaseLabels.detailHeaderBadgeText
     val homeTeamColor = remember(match.homeTeamName, match.homeTeamZhName) {
-        TeamColorRegistry.schemeFor(match.homeTeamName, match.homeTeamZhName).primary
+        TeamColorRegistry.resolveScheme(match.homeTeamName, match.homeTeamZhName).primary
     }
     val awayTeamColor = remember(match.awayTeamName, match.awayTeamZhName) {
-        TeamColorRegistry.schemeFor(match.awayTeamName, match.awayTeamZhName).primary
+        TeamColorRegistry.resolveScheme(match.awayTeamName, match.awayTeamZhName).primary
     }
     val (statHomeColor, statAwayColor) = remember(homeTeamColor, awayTeamColor) {
         distinctTeamContrastColors(homeTeamColor, awayTeamColor)

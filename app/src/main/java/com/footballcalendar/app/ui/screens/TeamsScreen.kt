@@ -1023,13 +1023,13 @@ fun PlayerDetailSheet(
                     contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    val detailChipColors = FilterChipDefaults.filterChipColors(
-                        containerColor = ThemeTokens.SurfaceSubtle,
-                        labelColor = ThemeTokens.InkSecondary,
-                        selectedContainerColor = ThemeTokens.AccentFallback,
-                        selectedLabelColor = ThemeTokens.PureWhite,
-                    )
                     item {
+                        val detailChipColors = FilterChipDefaults.filterChipColors(
+                            containerColor = ThemeTokens.SurfaceSubtle,
+                            labelColor = ThemeTokens.InkSecondary,
+                            selectedContainerColor = ThemeTokens.AccentFallback,
+                            selectedLabelColor = ThemeTokens.PureWhite,
+                        )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             FilterChip(selected = teamScopeFilter == 0, onClick = { teamScopeFilter = 0 }, label = { Text("全部") }, colors = detailChipColors, border = null)
                             if (player.clubZhName.isNotBlank()) {
