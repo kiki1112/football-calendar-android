@@ -58,7 +58,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -88,7 +87,6 @@ import androidx.navigation.compose.rememberNavController
 import com.footballcalendar.app.sync.NotificationHelper
 import com.footballcalendar.app.ui.CalendarViewModel
 import com.footballcalendar.app.ui.components.LiquidGlassSurface
-import com.footballcalendar.app.ui.components.LocalHazeState
 import com.footballcalendar.app.ui.components.schemeCSpringSpec
 import com.footballcalendar.app.ui.screens.CalendarScreen
 import com.footballcalendar.app.ui.screens.MatchDetailBottomSheet
@@ -243,12 +241,11 @@ private fun FootballCalendarRoot(
         AppTab.entries.indexOfFirst { it.route == currentRoute }.coerceAtLeast(0)
     }
 
-    CompositionLocalProvider(LocalHazeState provides hazeState) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(ThemeTokens.CanvasPearl),
-        ) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(ThemeTokens.CanvasPearl),
+    ) {
             Scaffold(
                 modifier = Modifier
                     .fillMaxSize()
@@ -653,7 +650,6 @@ private fun FootballCalendarRoot(
                     }
                 }
             }
-        }
         }
     }
 }
