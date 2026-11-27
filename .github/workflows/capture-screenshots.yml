@@ -63,13 +63,15 @@ jobs:
             -no-boot-anim
             -camera-back none
             -camera-front none
-          script: python3 .github/scripts/capture_screens.py --apk app-debug.apk --out screenshots
+          script: |
+            mkdir -p screenshots
+            python3 .github/scripts/capture_screens.py --apk app-debug.apk --out screenshots 2>&1 | tee screenshots/capture.log
 
       - name: Package Screenshots & Diagnostics Archive
         run: |
           ls -lh screenshots/
           grep -E "FixtureRepository|AndroidRuntime" screenshots/logcat.txt || true
-          zip -j v2.6.1-screenshots.zip screenshots/*.png screenshots/logcat.txt
+          zip -j v2.6.1-screenshots.zip screenshots/*.png screenshots/logcat.txt screenshots/capture.log
 
       - name: Upload Screenshots Workflow Artifact
         uses: actions/upload-artifact@v4

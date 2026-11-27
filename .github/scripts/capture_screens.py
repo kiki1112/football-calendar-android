@@ -280,29 +280,33 @@ def main() -> int:
     # 1. Home Calendar Overview (Hero countdown card + filter pills + calendar grid)
     screencap(out_dir, "01_calendar_home.png")
 
-    # 2. Switch calendar date to 25 (Nov 25 Beijing Watch-Night: 43 matches!)
-    if not tap_match(exact="25", min_y=int(h * 0.35), max_y=int(h * 0.90), prefer_last=True, wait_s=1.8):
-        swipe_up(w, h, dist_ratio=0.18, wait_s=1.0)
-        if not tap_match(exact="25", min_y=int(h * 0.30), max_y=int(h * 0.90), prefer_last=True, wait_s=1.8):
-            tap_match(exact="26", min_y=int(h * 0.48), max_y=int(h * 0.88), prefer_last=True, wait_s=1.8)
-    swipe_up(w, h, dist_ratio=0.50, wait_s=1.6)
+    # Scroll HeroNextMatchCard (1s countdown ticker) off-screen so UIAutomator hits 50ms idle dumps!
+    swipe_up(w, h, dist_ratio=0.45, wait_s=1.0)
+
+    # 2. Switch calendar date to 25 (Nov 25 Beijing Watch-Night: 43 rich finished matches!)
+    if not tap_match(exact="25", min_y=int(h * 0.15), max_y=int(h * 0.85), prefer_last=True, wait_s=1.8):
+        tap_xy(int(w * 0.375), int(h * 0.333), "fallback_date_25", wait_s=1.8)
+    swipe_up(w, h, dist_ratio=0.22, wait_s=1.4)
     screencap(out_dir, "02_calendar_day_matches.png")
 
-    # 3. Tap first visible match card -> Blurred Popup (图二: 赛况时间轴)
-    if not tap_any(
-        ["圣何塞地震", "瓦恩拉乌雷", "曼联", "利物浦", "巴塞罗那", "国际米兰", "巴黎圣日耳曼", "拜仁慕尼黑"],
-        wait_s=2.5,
+    # 3. Tap the SCORE CENTER (":") of the first finished match card -> opens MatchDetailBottomSheet (图二: 赛况时间轴)
+    if not tap_match(
+        contains=":",
+        min_x=int(w * 0.38),
+        max_x=int(w * 0.62),
         min_y=int(h * 0.45),
         max_y=int(h * 0.86),
+        wait_s=2.8,
     ):
-        tap_xy(w // 2, int(h * 0.56), "fallback_match_card", wait_s=2.5)
-    # Wait until ModalBottomSheet finishes sliding up and loads live events
+        tap_xy(w // 2, int(h * 0.57), "fallback_match_score_center", wait_s=2.8)
+
+    # Wait until ModalBottomSheet finishes opening & shows Sticky Sub-Tabs ("阵容")
     for _ in range(8):
         nodes = dump_nodes()
-        if find_node(nodes, exact="阵容", min_y=int(h * 0.08), max_y=int(h * 0.50)):
+        if find_node(nodes, exact="阵容", min_y=int(h * 0.12), max_y=int(h * 0.50)):
             break
         time.sleep(0.8)
-    time.sleep(1.5)
+    time.sleep(1.2)
     screencap(out_dir, "03_match_popup_events.png")
 
     # 4. Switch to 图文直播 inside 赛况 Tab
@@ -314,17 +318,23 @@ def main() -> int:
     if not tap_match(exact="阵容", min_y=int(h * 0.15), max_y=int(h * 0.45), wait_s=2.8):
         tap_xy(int(w * 0.375), int(h * 0.296), "fallback_lineup_tab", wait_s=2.8)
     screencap(out_dir, "05_match_lineup_pitch.png")
-    swipe_up(w, h, dist_ratio=0.62, wait_s=1.0)
-    swipe_up(w, h, dist_ratio=0.58, wait_s=1.5)
+    for _ in range(5):
+        nodes = dump_nodes()
+        if find_node(nodes, contains="替补阵容", min_y=int(h * 0.30), max_y=int(h * 0.78)):
+            break
+        swipe_up(w, h, dist_ratio=0.52, wait_s=1.0)
     screencap(out_dir, "06_match_lineup_bench.png")
 
     # 6. Switch to 统计 Tab -> scroll back to top (shared LazyColumn!) -> 球队统计 & 球员数据 (图三!)
     if not tap_match(exact="统计", min_y=int(h * 0.15), max_y=int(h * 0.45), wait_s=1.8):
         tap_xy(int(w * 0.625), int(h * 0.296), "fallback_stats_tab", wait_s=1.8)
-    swipe_down(w, h, dist_ratio=0.65, wait_s=0.8)
-    swipe_down(w, h, dist_ratio=0.65, wait_s=1.4)
+    for _ in range(6):
+        nodes = dump_nodes()
+        if find_node(nodes, exact="球员数据", min_y=int(h * 0.25), max_y=int(h * 0.60)):
+            break
+        swipe_down(w, h, dist_ratio=0.60, wait_s=0.9)
     screencap(out_dir, "07_match_stats_team.png")
-    if not tap_match(exact="球员数据", min_y=int(h * 0.25), max_y=int(h * 0.55), wait_s=2.2):
+    if not tap_match(exact="球员数据", min_y=int(h * 0.25), max_y=int(h * 0.60), wait_s=2.2):
         tap_xy(int(w * 0.72), int(h * 0.375), "fallback_player_stats_pill", wait_s=2.2)
     screencap(out_dir, "08_match_stats_players.png")
 
