@@ -39,6 +39,7 @@ import coil.request.ImageRequest
 import com.footballcalendar.app.FootballCalendarApplication
 import com.footballcalendar.app.ui.theme.AppleDivider
 import com.footballcalendar.app.ui.theme.AppleRed
+import com.footballcalendar.app.ui.theme.AppleRedTint
 import com.footballcalendar.app.ui.theme.InkPrimary
 import com.footballcalendar.app.ui.theme.InkSecondary
 import com.footballcalendar.app.ui.theme.InkTertiary

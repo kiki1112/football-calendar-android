@@ -1064,6 +1064,8 @@ def build_ics(matches: list[NormalizedMatch], calendar_name: str, generated_at: 
         summary_prefix = "[已延期] " if m.status in {"POSTPONED", "CANCELLED"} else ""
         score_txt = f" ({m.homeScore}:{m.awayScore})" if m.homeScore is not None and m.awayScore is not None else ""
         summary = f"{summary_prefix}[{m.competitionZhName}] {m.homeTeamZhName} ({m.homeTeamName}) vs {m.awayTeamZhName} ({m.awayTeamName}){score_txt}"
+        desc_text = f"赛事: {m.competitionZhName} ({m.competitionName})\n状态: {STATUS_ZH_MAP.get(m.status, m.status)}"
+        status_ics = "CANCELLED" if m.status in {"POSTPONED", "CANCELLED"} else "CONFIRMED"
         lines.extend(
             [
                 "BEGIN:VEVENT",
@@ -1072,9 +1074,9 @@ def build_ics(matches: list[NormalizedMatch], calendar_name: str, generated_at: 
                 f"DTSTART:{start.strftime('%Y%m%dT%H%M%SZ')}",
                 f"DTEND:{end.strftime('%Y%m%dT%H%M%SZ')}",
                 f"SUMMARY:{ics_escape(summary)}",
-                f"DESCRIPTION:{ics_escape(f'赛事: {m.competitionZhName} ({m.competitionName})\\n状态: {STATUS_ZH_MAP.get(m.status, m.status)}')}",
+                f"DESCRIPTION:{ics_escape(desc_text)}",
                 f"LOCATION:{ics_escape(m.venue or m.competitionName)}",
-                f"STATUS:{'CANCELLED' if m.status in {'POSTPONED', 'CANCELLED'} else 'CONFIRMED'}",
+                f"STATUS:{status_ics}",
                 "END:VEVENT",
             ]
         )
