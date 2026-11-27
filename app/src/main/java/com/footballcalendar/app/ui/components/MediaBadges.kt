@@ -207,7 +207,7 @@ fun AppleSegmentedControl(
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = Color(0xFFE5E5EA),
+        color = ThemeTokens.SurfaceSubtle,
         shape = RoundedCornerShape(12.dp),
     ) {
         Row(

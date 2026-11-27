@@ -59,7 +59,8 @@ import java.time.YearMonth
 data class CalendarUiState(
     val currentMonth: YearMonth = YearMonth.now(),
     val selectedDate: LocalDate = LocalDate.now(),
-    val isMonthExpanded: Boolean = true,
+    val isMonthExpanded: Boolean = false,
+    val lotteryFilterOnly: Boolean = false,
     val calendarFilterTab: Int = 0, // 0=全部关注, 1=只看主队, 2=必看清单
     val selectedLeagueFilter: String? = null, // null=全部, "NAT"=国家队合集, or code
     val allMatches: List<MatchItem> = emptyList(),
@@ -111,7 +112,8 @@ data class CalendarUiState(
 private data class UiInteractionState(
     val currentMonth: YearMonth = YearMonth.now(),
     val selectedDate: LocalDate = LocalDate.now(),
-    val isMonthExpanded: Boolean = true,
+    val isMonthExpanded: Boolean = false,
+    val lotteryFilterOnly: Boolean = false,
     val calendarFilterTab: Int = 0,
     val selectedLeagueFilter: String? = null,
     val selectedStandingsLeague: String = "PL",
@@ -239,14 +241,14 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private val selectedDayRoomFlow = combine(
-        uiInteraction.map { it.selectedDate }.distinctUntilChanged(),
+        uiInteraction.map { it.selectedDate to it.lotteryFilterOnly }.distinctUntilChanged(),
         prefsRepo.preferencesFlow.map { it.watchNightGrouping }.distinctUntilChanged(),
-    ) { date, watchNightGrouping ->
-        date.toString() to watchNightGrouping
-    }.distinctUntilChanged().flatMapLatest { (dateKey, watchNightGrouping) ->
+    ) { (date, lotteryOnly), watchNightGrouping ->
+        Triple(date.toString(), lotteryOnly, watchNightGrouping)
+    }.distinctUntilChanged().flatMapLatest { (dateKey, lotteryOnly, watchNightGrouping) ->
         fixtureRepo.observeMatchesByDate(
             dateKey = dateKey,
-            isLotteryOnly = false,
+            isLotteryOnly = lotteryOnly,
             watchNightGrouping = watchNightGrouping,
         )
     }
@@ -270,6 +272,7 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
         val zoneId = MatchTimeFormatter.BEIJING_ZONE
         fun matchAllowed(match: MatchItem): Boolean {
             val leagueAllowed = match.competitionCode in prefs.followedCompetitions
+            val lotteryAllowed = !ui.lotteryFilterOnly || !match.lotteryCode.isNullOrBlank()
             val chipAllowed = when (ui.selectedLeagueFilter) {
                 null -> true
                 "NAT" -> match.isInternational
@@ -280,7 +283,7 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
                 2 -> match.id in prefs.watchlistMatchIds
                 else -> true
             }
-            return leagueAllowed && chipAllowed && tabAllowed
+            return leagueAllowed && lotteryAllowed && chipAllowed && tabAllowed
         }
 
         val filtered = allMatches.filter(::matchAllowed)
@@ -331,6 +334,7 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
             currentMonth = ui.currentMonth,
             selectedDate = ui.selectedDate,
             isMonthExpanded = ui.isMonthExpanded,
+            lotteryFilterOnly = ui.lotteryFilterOnly,
             calendarFilterTab = ui.calendarFilterTab,
             selectedLeagueFilter = ui.selectedLeagueFilter,
             allMatches = allMatches,
@@ -403,6 +407,10 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
 
     fun toggleMonthExpanded() {
         uiInteraction.update { it.copy(isMonthExpanded = !it.isMonthExpanded) }
+    }
+
+    fun setLotteryFilterOnly(enabled: Boolean) {
+        uiInteraction.update { it.copy(lotteryFilterOnly = enabled) }
     }
 
     fun setCalendarFilterTab(tab: Int) {

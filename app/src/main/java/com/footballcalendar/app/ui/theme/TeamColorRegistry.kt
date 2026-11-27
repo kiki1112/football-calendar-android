@@ -58,7 +58,7 @@ object TeamColorRegistry {
     @Volatile
     private var fallbackScheme = TeamColorScheme(
         primary = ThemeTokens.AccentFallback,
-        secondary = Color(0xFF1E3A8A),
+        secondary = ThemeTokens.AccentDeep,
         accentStripe = ThemeTokens.AccentFallback,
     )
 

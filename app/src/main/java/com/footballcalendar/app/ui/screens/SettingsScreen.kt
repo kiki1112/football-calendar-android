@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -55,6 +56,7 @@ import com.footballcalendar.app.ui.theme.AppleRedBorder
 import com.footballcalendar.app.ui.theme.AppleRedTint
 import com.footballcalendar.app.ui.theme.InkPrimary
 import com.footballcalendar.app.ui.theme.InkSecondary
+import com.footballcalendar.app.ui.theme.ThemeTokens
 import com.footballcalendar.app.util.MatchTimeFormatter
 
 @Composable
@@ -129,8 +131,8 @@ fun SettingsScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .background(AppleCanvas),
-        contentPadding = PaddingValues(bottom = 28.dp),
+            .background(ThemeTokens.CanvasPearl),
+        contentPadding = PaddingValues(bottom = 116.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item {
@@ -340,6 +342,12 @@ fun SettingsScreen(
                                 onUpdateSyncSettings(checked, intervalHours, wifiOnly)
                             },
                         )
+                        val settingsChipColors = FilterChipDefaults.filterChipColors(
+                            containerColor = ThemeTokens.SurfaceSubtle,
+                            labelColor = ThemeTokens.InkSecondary,
+                            selectedContainerColor = ThemeTokens.AccentFallback,
+                            selectedLabelColor = ThemeTokens.PureWhite,
+                        )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             listOf(6, 12, 24).forEach { hrs ->
                                 FilterChip(
@@ -348,6 +356,8 @@ fun SettingsScreen(
                                         intervalHours = hrs
                                         onUpdateSyncSettings(autoSyncEnabled, hrs, wifiOnly)
                                     },
+                                    colors = settingsChipColors,
+                                    border = null,
                                     label = { Text("每 ${hrs} 小时") },
                                 )
                             }
@@ -490,10 +500,10 @@ private fun AppleSwitchRow(
             checked = checked,
             onCheckedChange = onCheckedChange,
             colors = SwitchDefaults.colors(
-                checkedThumbColor = Color.White,
-                checkedTrackColor = AppleRed,
-                uncheckedThumbColor = Color.White,
-                uncheckedTrackColor = Color(0xFFE5E5EA),
+                checkedThumbColor = ThemeTokens.PureWhite,
+                checkedTrackColor = ThemeTokens.AccentFallback,
+                uncheckedThumbColor = ThemeTokens.PureWhite,
+                uncheckedTrackColor = ThemeTokens.SwitchUncheckedTrack,
                 uncheckedBorderColor = Color.Transparent,
             ),
         )

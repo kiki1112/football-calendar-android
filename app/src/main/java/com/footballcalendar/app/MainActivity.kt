@@ -13,21 +13,34 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
@@ -35,13 +48,9 @@ import androidx.compose.material.icons.filled.Leaderboard
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -49,6 +58,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -56,10 +66,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -75,6 +87,9 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.footballcalendar.app.sync.NotificationHelper
 import com.footballcalendar.app.ui.CalendarViewModel
+import com.footballcalendar.app.ui.components.LiquidGlassSurface
+import com.footballcalendar.app.ui.components.LocalHazeState
+import com.footballcalendar.app.ui.components.schemeCSpringSpec
 import com.footballcalendar.app.ui.screens.CalendarScreen
 import com.footballcalendar.app.ui.screens.MatchDetailBottomSheet
 import com.footballcalendar.app.ui.screens.PlayerDetailSheet
@@ -82,15 +97,10 @@ import com.footballcalendar.app.ui.screens.SettingsScreen
 import com.footballcalendar.app.ui.screens.StandingsScreen
 import com.footballcalendar.app.ui.screens.TeamDetailBottomSheet
 import com.footballcalendar.app.ui.screens.TeamsScreen
-import com.footballcalendar.app.ui.theme.AppleCanvas
-import com.footballcalendar.app.ui.theme.AppleDivider
-import com.footballcalendar.app.ui.theme.AppleRed
-import com.footballcalendar.app.ui.theme.AppleRedBorder
-import com.footballcalendar.app.ui.theme.AppleRedTint
 import com.footballcalendar.app.ui.theme.FootballCalendarTheme
-import com.footballcalendar.app.ui.theme.InkPrimary
-import com.footballcalendar.app.ui.theme.InkSecondary
-import com.footballcalendar.app.ui.theme.InkTertiary
+import com.footballcalendar.app.ui.theme.ThemeTokens
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.haze
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -109,8 +119,12 @@ class MainActivity : ComponentActivity() {
         pendingOpenMatchId.value = intent?.getStringExtra(NotificationHelper.EXTRA_OPEN_MATCH_ID)
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.light(
-                AppleCanvas.toArgb(),
-                AppleCanvas.toArgb(),
+                ThemeTokens.CanvasPearl.toArgb(),
+                ThemeTokens.CanvasPearl.toArgb(),
+            ),
+            navigationBarStyle = SystemBarStyle.light(
+                ThemeTokens.CanvasPearl.toArgb(),
+                ThemeTokens.CanvasPearl.toArgb(),
             ),
         )
         setContent {
@@ -223,64 +237,58 @@ private fun FootballCalendarRoot(
         viewModel.navigateBackModal()
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        Scaffold(
-            modifier = if (backdropBlur > 0.dp) Modifier.blur(backdropBlur) else Modifier,
-        containerColor = AppleCanvas,
-        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
-        bottomBar = {
-            Column {
-                HorizontalDivider(color = AppleDivider)
-                NavigationBar(containerColor = Color.White) {
-                    AppTab.entries.forEach { tab ->
-                        NavigationBarItem(
-                            selected = currentRoute == tab.route,
-                            onClick = {
-                                if (currentRoute != tab.route) {
-                                    navController.navigate(tab.route) {
-                                        popUpTo(AppTab.CALENDAR.route) { saveState = true }
-                                        launchSingleTop = true
-                                        restoreState = true
-                                    }
-                                }
-                            },
-                            icon = { Icon(tab.icon, contentDescription = tab.label) },
-                            label = { Text(tab.label) },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = AppleRed,
-                                selectedTextColor = AppleRed,
-                                indicatorColor = AppleRedTint,
-                                unselectedIconColor = InkTertiary,
-                                unselectedTextColor = InkTertiary,
-                            ),
+    val hazeState = remember { HazeState() }
+    val haptic = LocalHapticFeedback.current
+    val selectedTabIndex = remember(currentRoute) {
+        AppTab.entries.indexOfFirst { it.route == currentRoute }.coerceAtLeast(0)
+    }
+
+    CompositionLocalProvider(LocalHazeState provides hazeState) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(ThemeTokens.CanvasPearl),
+        ) {
+            Scaffold(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .haze(state = hazeState)
+                    .then(if (backdropBlur > 0.dp) Modifier.blur(backdropBlur) else Modifier),
+                containerColor = ThemeTokens.CanvasPearl,
+                snackbarHost = {
+                    SnackbarHost(
+                        hostState = snackbarHostState,
+                        modifier = Modifier
+                            .navigationBarsPadding()
+                            .padding(bottom = 86.dp),
+                    )
+                },
+            ) { innerPadding ->
+                NavHost(
+                    navController = navController,
+                    startDestination = AppTab.CALENDAR.route,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(top = innerPadding.calculateTopPadding()),
+                ) {
+                    composable(AppTab.CALENDAR.route) {
+                        CalendarScreen(
+                            state = state,
+                            onSelectDate = viewModel::selectDate,
+                            onPrevMonth = viewModel::previousMonth,
+                            onNextMonth = viewModel::nextMonth,
+                            onJumpToday = viewModel::jumpToToday,
+                            onToggleExpanded = viewModel::toggleMonthExpanded,
+                            onSelectLotteryFilter = viewModel::setLotteryFilterOnly,
+                            onSelectFilterTab = viewModel::setCalendarFilterTab,
+                            onSelectLeagueFilter = viewModel::selectLeagueFilter,
+                            onRefresh = { viewModel.syncNow(simulateDemoChange = false) },
+                            onDismissChanges = viewModel::dismissChangesBanner,
+                            onOpenMatchDetail = { m -> viewModel.openMatchDetail(m) },
+                            onOpenTeamDetail = { en, zh, cc, cr, tid -> viewModel.openTeamDetail(en, zh, cc, cr, tid) },
+                            onToggleWatchlist = viewModel::toggleWatchlistMatch,
                         )
                     }
-                }
-            }
-        },
-    ) { innerPadding ->
-        NavHost(
-            navController = navController,
-            startDestination = AppTab.CALENDAR.route,
-            modifier = Modifier.padding(innerPadding),
-        ) {
-            composable(AppTab.CALENDAR.route) {
-                CalendarScreen(
-                    state = state,
-                    onSelectDate = viewModel::selectDate,
-                    onPrevMonth = viewModel::previousMonth,
-                    onNextMonth = viewModel::nextMonth,
-                    onJumpToday = viewModel::jumpToToday,
-                    onToggleExpanded = viewModel::toggleMonthExpanded,
-                    onSelectFilterTab = viewModel::setCalendarFilterTab,
-                    onSelectLeagueFilter = viewModel::selectLeagueFilter,
-                    onRefresh = { viewModel.syncNow(simulateDemoChange = false) },
-                    onDismissChanges = viewModel::dismissChangesBanner,
-                    onOpenMatchDetail = { m -> viewModel.openMatchDetail(m) },
-                    onOpenTeamDetail = { en, zh, cc, cr, tid -> viewModel.openTeamDetail(en, zh, cc, cr, tid) },
-                    onToggleWatchlist = viewModel::toggleWatchlistMatch,
-                )
-            }
             composable(AppTab.STANDINGS.route) {
                 StandingsScreen(
                     state = state,
@@ -334,8 +342,8 @@ private fun FootballCalendarRoot(
                 ModalBottomSheet(
                     onDismissRequest = viewModel::closeAllModals,
                     sheetState = sheetState,
-                    containerColor = Color.White.copy(alpha = 0.94f),
-                    scrimColor = Color(0x4A1C1C1E),
+                    containerColor = ThemeTokens.SurfacePure,
+                    scrimColor = ThemeTokens.ModalScrim,
                     shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
                 ) {
                     MatchDetailBottomSheet(
@@ -487,6 +495,100 @@ private fun FootballCalendarRoot(
         }
     }
 
+        // Floating Scheme C Liquid Glass 4-Tab Pill Dock (shown on top-level tabs only)
+        AnimatedVisibility(
+            visible = selectedMatch == null && selectedTeam == null && selectedPlayer == null,
+            enter = fadeIn() + slideInVertically { it / 2 },
+            exit = fadeOut() + slideOutVertically { it / 2 },
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(horizontal = 20.dp, vertical = 14.dp),
+        ) {
+            LiquidGlassSurface(
+                hazeState = hazeState,
+                shape = RoundedCornerShape(999.dp),
+                elevation = 14.dp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(64.dp),
+            ) {
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(5.dp),
+            ) {
+                val tabWidth = maxWidth / AppTab.entries.size
+                val indicatorOffset by animateDpAsState(
+                    targetValue = tabWidth * selectedTabIndex,
+                    animationSpec = schemeCSpringSpec(),
+                    label = "floatingDockIndicatorOffset",
+                )
+                Box(
+                    modifier = Modifier
+                        .offset(x = indicatorOffset)
+                        .width(tabWidth)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(ThemeTokens.SurfacePure)
+                        .border(
+                            width = 0.5.dp,
+                            color = ThemeTokens.Hairline,
+                            shape = RoundedCornerShape(999.dp),
+                        ),
+                )
+                Row(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    AppTab.entries.forEach { tab ->
+                        val selected = currentRoute == tab.route
+                        val tint by animateColorAsState(
+                            targetValue = if (selected) ThemeTokens.AccentFallback else ThemeTokens.InkMuted,
+                            animationSpec = schemeCSpringSpec(),
+                            label = "floatingDockTabTint",
+                        )
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .clip(RoundedCornerShape(999.dp))
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                ) {
+                                    if (!selected) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        navController.navigate(tab.route) {
+                                            popUpTo(AppTab.CALENDAR.route) { saveState = true }
+                                            launchSingleTop = true
+                                            restoreState = true
+                                        }
+                                    }
+                                },
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                        ) {
+                            Icon(
+                                imageVector = tab.icon,
+                                contentDescription = tab.label,
+                                tint = tint,
+                                modifier = Modifier.size(21.dp),
+                            )
+                            Text(
+                                text = tab.label,
+                                color = tint,
+                                fontSize = 11.sp,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        }
+
         // In-App Real-Time Match Broadcast Floating Banner (top overlay across all screens)
         val liveAlert = state.liveBroadcastAlert
         AnimatedVisibility(
@@ -504,10 +606,10 @@ private fun FootballCalendarRoot(
                         viewModel.dismissLiveBroadcast()
                         viewModel.openMatchDetail(liveAlert.match)
                     },
-                    color = Color.White,
+                    color = ThemeTokens.SurfacePure,
                     shape = RoundedCornerShape(18.dp),
-                    shadowElevation = 6.dp,
-                    border = BorderStroke(1.dp, AppleRedBorder),
+                    shadowElevation = 8.dp,
+                    border = BorderStroke(1.dp, ThemeTokens.LivePulseBorder),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Row(
@@ -515,28 +617,34 @@ private fun FootballCalendarRoot(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(ThemeTokens.LivePulse),
+                        )
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = liveAlert.headline,
-                                color = AppleRed,
+                                color = ThemeTokens.LivePulse,
                                 fontWeight = FontWeight.ExtraBold,
                                 fontSize = 13.sp,
                             )
                             Text(
                                 text = liveAlert.detail,
-                                color = InkPrimary,
+                                color = ThemeTokens.InkPrimary,
                                 style = MaterialTheme.typography.bodySmall,
                             )
                         }
                         Text(
                             text = "看直播 ›",
-                            color = AppleRed,
+                            color = ThemeTokens.AccentFallback,
                             fontWeight = FontWeight.Bold,
                             style = MaterialTheme.typography.labelMedium,
                         )
                         Text(
                             text = "✕",
-                            color = InkTertiary,
+                            color = ThemeTokens.InkMuted,
                             fontSize = 14.sp,
                             modifier = Modifier
                                 .clickable { viewModel.dismissLiveBroadcast() }
@@ -545,6 +653,7 @@ private fun FootballCalendarRoot(
                     }
                 }
             }
+        }
         }
     }
 }

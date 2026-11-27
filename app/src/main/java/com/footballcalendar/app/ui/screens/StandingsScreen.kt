@@ -34,6 +34,7 @@ import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -50,6 +51,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -69,29 +71,22 @@ import com.footballcalendar.app.ui.components.TeamCrest
 import com.footballcalendar.app.ui.theme.AmberWarm
 import com.footballcalendar.app.ui.theme.AppleCanvas
 import com.footballcalendar.app.ui.theme.AppleDivider
-import com.footballcalendar.app.ui.theme.AppleLiveRed
 import com.footballcalendar.app.ui.theme.AppleRed
-import com.footballcalendar.app.ui.theme.AppleRedTint
 import com.footballcalendar.app.ui.theme.InkPrimary
 import com.footballcalendar.app.ui.theme.InkSecondary
 import com.footballcalendar.app.ui.theme.InkTertiary
-import com.footballcalendar.app.ui.theme.UclBlue
+import com.footballcalendar.app.ui.theme.ThemeTokens
 import com.footballcalendar.app.util.MatchTimeFormatter
 
-private val ZoneGreen = Color(0xFF059669)
-private val ZonePurple = Color(0xFF7C3AED)
-private val ZoneOrange = Color(0xFFEA580C)
-private val ZoneCyan = Color(0xFF0284C7)
-
 private fun colorForZone(zoneType: String): Color = when (zoneType) {
-    "UCL" -> UclBlue
-    "UCL_QUAL" -> ZoneCyan
-    "PROMOTION" -> ZoneGreen
-    "UEL" -> AmberWarm
-    "UECL" -> Color(0xFF10B981)
-    "PLAYOFF" -> ZonePurple
-    "RELEGATION_PLAYOFF" -> ZoneOrange
-    "RELEGATION" -> AppleLiveRed
+    "UCL" -> ThemeTokens.AccentFallback
+    "UCL_QUAL" -> ThemeTokens.ZoneCyan
+    "PROMOTION" -> ThemeTokens.SuccessEmerald
+    "UEL" -> ThemeTokens.LotteryGold
+    "UECL" -> ThemeTokens.ZoneUclCon
+    "PLAYOFF" -> ThemeTokens.ZonePurple
+    "RELEGATION_PLAYOFF" -> ThemeTokens.ZoneOrange
+    "RELEGATION" -> ThemeTokens.LivePulse
     else -> Color.Transparent
 }
 
@@ -108,8 +103,8 @@ fun StandingsScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .background(AppleCanvas),
-        contentPadding = PaddingValues(bottom = 24.dp),
+            .background(ThemeTokens.CanvasPearl),
+        contentPadding = PaddingValues(bottom = 116.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item {
@@ -121,7 +116,7 @@ fun StandingsScreen(
                 Text(
                     text = "完整席位分区 · 点击任意球队查看详情与阵容",
                     style = MaterialTheme.typography.labelMedium,
-                    color = AppleRed,
+                    color = ThemeTokens.AccentFallback,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Spacer(modifier = Modifier.height(2.dp))
@@ -129,38 +124,52 @@ fun StandingsScreen(
                     text = "联赛积分榜",
                     fontSize = 28.sp,
                     fontWeight = FontWeight.ExtraBold,
-                    color = InkPrimary,
+                    color = ThemeTokens.InkPrimary,
                     letterSpacing = (-0.5).sp,
                 )
             }
         }
 
         item {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                availableLeagues.forEach { code ->
-                    val name = CompetitionCatalog.findByCode(code)?.zhName ?: code
-                    val selected = state.selectedStandingsLeague == code
-                    Surface(
-                        onClick = { onSelectLeague(code) },
-                        shape = RoundedCornerShape(999.dp),
-                        color = if (selected) AppleRed else Color.White,
-                        border = if (selected) null else androidx.compose.foundation.BorderStroke(0.75.dp, AppleDivider),
-                    ) {
-                        Text(
-                            text = name,
-                            color = if (selected) Color.White else InkPrimary,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                        )
+            Box(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(start = 16.dp, end = 28.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    availableLeagues.forEach { code ->
+                        val name = CompetitionCatalog.findByCode(code)?.zhName ?: code
+                        val selected = state.selectedStandingsLeague == code
+                        Surface(
+                            onClick = { onSelectLeague(code) },
+                            shape = RoundedCornerShape(999.dp),
+                            color = if (selected) ThemeTokens.AccentFallback else ThemeTokens.SurfacePure,
+                            border = if (selected) null else androidx.compose.foundation.BorderStroke(0.75.dp, ThemeTokens.Hairline),
+                        ) {
+                            Text(
+                                text = name,
+                                color = if (selected) ThemeTokens.PureWhite else ThemeTokens.InkPrimary,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            )
+                        }
                     }
                 }
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .width(24.dp)
+                        .height(36.dp)
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(Color.Transparent, ThemeTokens.CanvasPearl),
+                            ),
+                        ),
+                )
             }
         }
 
@@ -169,34 +178,33 @@ fun StandingsScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp),
-                color = Color.White,
+                color = ThemeTokens.SurfacePure,
                 shape = RoundedCornerShape(20.dp),
-                shadowElevation = 1.dp,
             ) {
                 Column {
                     val showFormColumn = rows.any { it.form.isNotBlank() }
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(Color(0xFFFAFAFC))
+                            .background(ThemeTokens.TableHeaderBg)
                             .padding(horizontal = 14.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("No.", modifier = Modifier.width(34.dp), style = MaterialTheme.typography.labelSmall, color = InkTertiary, fontWeight = FontWeight.Bold)
-                        Text("球队", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall, color = InkTertiary, fontWeight = FontWeight.Bold)
-                        Text("赛", modifier = Modifier.width(26.dp), textAlign = TextAlign.Center, style = MaterialTheme.typography.labelSmall, color = InkTertiary, fontWeight = FontWeight.Bold)
-                        Text("净", modifier = Modifier.width(34.dp), textAlign = TextAlign.Center, style = MaterialTheme.typography.labelSmall, color = InkTertiary, fontWeight = FontWeight.Bold)
+                        Text("No.", modifier = Modifier.width(34.dp), style = MaterialTheme.typography.labelSmall, color = ThemeTokens.InkMuted, fontWeight = FontWeight.Bold)
+                        Text("球队", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall, color = ThemeTokens.InkMuted, fontWeight = FontWeight.Bold)
+                        Text("赛", modifier = Modifier.width(26.dp), textAlign = TextAlign.Center, style = MaterialTheme.typography.labelSmall, color = ThemeTokens.InkMuted, fontWeight = FontWeight.Bold)
+                        Text("净", modifier = Modifier.width(34.dp), textAlign = TextAlign.Center, style = MaterialTheme.typography.labelSmall, color = ThemeTokens.InkMuted, fontWeight = FontWeight.Bold)
                         Text(
                             if (showFormColumn) "近5场" else "胜平负",
                             modifier = Modifier.width(52.dp),
                             textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.labelSmall,
-                            color = InkTertiary,
+                            color = ThemeTokens.InkMuted,
                             fontWeight = FontWeight.Bold,
                         )
-                        Text("积分", modifier = Modifier.width(32.dp), textAlign = TextAlign.End, style = MaterialTheme.typography.labelSmall, color = InkTertiary, fontWeight = FontWeight.Bold)
+                        Text("积分", modifier = Modifier.width(32.dp), textAlign = TextAlign.End, style = MaterialTheme.typography.labelSmall, color = ThemeTokens.InkMuted, fontWeight = FontWeight.Bold)
                     }
-                    HorizontalDivider(color = AppleCanvas)
+                    HorizontalDivider(color = ThemeTokens.Hairline, thickness = 1.dp)
 
                     if (rows.isEmpty()) {
                         Box(
@@ -208,7 +216,7 @@ fun StandingsScreen(
                             Text(
                                 text = "暂无该联赛积分数据，可在日历页下拉同步刷新",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = InkSecondary,
+                                color = ThemeTokens.InkSecondary,
                             )
                         }
                     } else {
@@ -221,14 +229,14 @@ fun StandingsScreen(
                             if (groupTitle.isNotBlank() && groupedRows.size > 1) {
                                 Surface(
                                     modifier = Modifier.fillMaxWidth(),
-                                    color = Color(0xFFF3F4F6),
+                                    color = ThemeTokens.TableGroupBg,
                                 ) {
                                     Text(
                                         text = groupTitle,
                                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
                                         style = MaterialTheme.typography.labelMedium,
                                         fontWeight = FontWeight.Bold,
-                                        color = AppleRed,
+                                        color = ThemeTokens.AccentFallback,
                                     )
                                 }
                             }
@@ -241,7 +249,7 @@ fun StandingsScreen(
                                     onClick = { onClickTeam(entry) },
                                 )
                                 if (idx < groupEntries.lastIndex || groupIdx < groupedRows.size - 1) {
-                                    HorizontalDivider(color = AppleCanvas)
+                                    HorizontalDivider(color = ThemeTokens.Hairline, thickness = 1.dp)
                                 }
                             }
                         }
@@ -302,24 +310,25 @@ private fun StandingRowItem(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(if (isFavorite) AppleRedTint.copy(alpha = 0.72f) else Color.White)
+            .background(if (isFavorite) ThemeTokens.AccentSoftBg else ThemeTokens.SurfacePure)
             .clickable(onClick = onClick)
             .padding(end = 10.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .width(4.dp)
+                .width(3.dp)
                 .height(30.dp)
-                .background(if (isFavorite) AppleRed else zoneBarColor),
+                .clip(RoundedCornerShape(topEnd = 999.dp, bottomEnd = 999.dp))
+                .background(if (isFavorite) ThemeTokens.AccentFallback else zoneBarColor),
         )
         Spacer(modifier = Modifier.width(8.dp))
 
         Text(
-            text = "No.${entry.rank}",
-            modifier = Modifier.width(34.dp),
-            style = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFeatureSettings = "tnum"),
-            color = if (isFavorite) AppleRed else InkPrimary,
+            text = "${entry.rank}",
+            modifier = Modifier.width(30.dp),
+            style = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFeatureSettings = "tnum"),
+            color = if (isFavorite) ThemeTokens.AccentFallback else ThemeTokens.InkPrimary,
         )
 
         Row(
@@ -343,14 +352,14 @@ private fun StandingRowItem(
             modifier = Modifier.width(26.dp),
             textAlign = TextAlign.Center,
             style = TextStyle(fontSize = 12.sp, fontFeatureSettings = "tnum"),
-            color = InkSecondary,
+            color = ThemeTokens.InkSecondary,
         )
         Text(
             text = if (entry.goalDifference > 0) "+${entry.goalDifference}" else entry.goalDifference.toString(),
             modifier = Modifier.width(34.dp),
             textAlign = TextAlign.Center,
             style = TextStyle(fontSize = 12.sp, fontFeatureSettings = "tnum"),
-            color = InkSecondary,
+            color = ThemeTokens.InkSecondary,
         )
 
         if (showFormColumn) {
@@ -368,9 +377,9 @@ private fun StandingRowItem(
                             .clip(CircleShape)
                             .background(
                                 when (res.trim().uppercase()) {
-                                    "W" -> AppleRed
-                                    "D" -> AmberWarm
-                                    else -> Color(0xFFD1D1D6)
+                                    "W" -> ThemeTokens.SuccessEmerald
+                                    "D" -> ThemeTokens.LotteryGold
+                                    else -> ThemeTokens.SwitchUncheckedTrack
                                 },
                             ),
                     )
@@ -382,7 +391,7 @@ private fun StandingRowItem(
                 modifier = Modifier.width(52.dp),
                 textAlign = TextAlign.Center,
                 style = TextStyle(fontSize = 11.sp, fontFeatureSettings = "tnum"),
-                color = InkSecondary,
+                color = ThemeTokens.InkSecondary,
             )
         }
 
@@ -391,12 +400,12 @@ private fun StandingRowItem(
             modifier = Modifier.width(32.dp),
             textAlign = TextAlign.End,
             style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Black, fontFeatureSettings = "tnum"),
-            color = if (isFavorite) AppleRed else InkPrimary,
+            color = if (isFavorite) ThemeTokens.AccentFallback else ThemeTokens.InkPrimary,
         )
         Icon(
             imageVector = Icons.Filled.ChevronRight,
             contentDescription = null,
-            tint = InkTertiary,
+            tint = ThemeTokens.InkMuted,
             modifier = Modifier.size(14.dp),
         )
     }
@@ -559,6 +568,15 @@ fun TeamDetailBottomSheet(
                             FilterChip(
                                 selected = isFavorite,
                                 onClick = onToggleFavorite,
+                                colors = FilterChipDefaults.filterChipColors(
+                                    containerColor = ThemeTokens.SurfaceSubtle,
+                                    labelColor = ThemeTokens.InkSecondary,
+                                    selectedContainerColor = ThemeTokens.AccentSoftBg,
+                                    selectedLabelColor = ThemeTokens.AccentFallback,
+                                    iconColor = ThemeTokens.InkMuted,
+                                    selectedLeadingIconColor = ThemeTokens.AccentFallback,
+                                ),
+                                border = null,
                                 label = { Text(if (isFavorite) "已关注" else "关注") },
                                 leadingIcon = {
                                     Icon(

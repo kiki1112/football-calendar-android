@@ -89,6 +89,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.coil.compose)
     implementation(libs.coil.svg)
+    implementation(libs.haze)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

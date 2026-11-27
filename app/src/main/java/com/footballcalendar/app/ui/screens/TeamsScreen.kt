@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -35,6 +36,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -54,7 +56,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -78,6 +82,7 @@ import com.footballcalendar.app.ui.theme.InkPrimary
 import com.footballcalendar.app.ui.theme.InkSecondary
 import com.footballcalendar.app.ui.theme.InkTertiary
 import com.footballcalendar.app.ui.theme.TeamColorRegistry
+import com.footballcalendar.app.ui.theme.ThemeTokens
 import com.footballcalendar.app.util.MatchPhaseFormatter
 import com.footballcalendar.app.util.MatchTimeFormatter
 import com.footballcalendar.app.util.TeamAssetCatalog
@@ -178,8 +183,8 @@ fun TeamsScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .background(AppleCanvas),
-        contentPadding = PaddingValues(bottom = 24.dp),
+            .background(ThemeTokens.CanvasPearl),
+        contentPadding = PaddingValues(bottom = 116.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item {
@@ -248,55 +253,103 @@ fun TeamsScreen(
                             },
                         )
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            FilterChip(
-                                selected = !onlyFavPlayers && !onlyScorerLeaders,
-                                onClick = {
-                                    onlyFavPlayers = false
-                                    onlyScorerLeaders = false
-                                },
-                                label = { Text("全部球员 (${state.starPlayers.size})") },
-                            )
-                            FilterChip(
-                                selected = onlyScorerLeaders,
-                                onClick = {
-                                    onlyScorerLeaders = !onlyScorerLeaders
-                                    onlyFavPlayers = false
-                                },
-                                label = { Text("⚽ 射手榜") },
-                            )
-                            FilterChip(
-                                selected = onlyFavPlayers,
-                                onClick = {
-                                    onlyFavPlayers = !onlyFavPlayers
-                                    onlyScorerLeaders = false
-                                },
-                                label = { Text("★ 我关注的球员") },
+                        val chipColors = FilterChipDefaults.filterChipColors(
+                            containerColor = ThemeTokens.SurfaceSubtle,
+                            labelColor = ThemeTokens.InkSecondary,
+                            selectedContainerColor = ThemeTokens.AccentFallback,
+                            selectedLabelColor = ThemeTokens.PureWhite,
+                        )
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState())
+                                    .padding(end = 26.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                FilterChip(
+                                    selected = !onlyFavPlayers && !onlyScorerLeaders,
+                                    onClick = {
+                                        onlyFavPlayers = false
+                                        onlyScorerLeaders = false
+                                    },
+                                    label = { Text("全部球员 (${state.starPlayers.size})", style = TextStyle(fontFeatureSettings = "tnum")) },
+                                    colors = chipColors,
+                                    border = null,
+                                )
+                                FilterChip(
+                                    selected = onlyScorerLeaders,
+                                    onClick = {
+                                        onlyScorerLeaders = !onlyScorerLeaders
+                                        onlyFavPlayers = false
+                                    },
+                                    label = { Text("⚽ 射手榜") },
+                                    colors = chipColors,
+                                    border = null,
+                                )
+                                FilterChip(
+                                    selected = onlyFavPlayers,
+                                    onClick = {
+                                        onlyFavPlayers = !onlyFavPlayers
+                                        onlyScorerLeaders = false
+                                    },
+                                    label = { Text("★ 我关注的球员") },
+                                    colors = chipColors,
+                                    border = null,
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.CenterEnd)
+                                    .width(24.dp)
+                                    .height(34.dp)
+                                    .background(
+                                        Brush.horizontalGradient(
+                                            listOf(Color.Transparent, ThemeTokens.SurfacePure),
+                                        ),
+                                    ),
                             )
                         }
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            FilterChip(
-                                selected = selectedPlayerLeague == null,
-                                onClick = { selectedPlayerLeague = null },
-                                label = { Text("全赛事") },
-                            )
-                            CompetitionCatalog.standingsCodes.forEach { code ->
-                                val zh = CompetitionCatalog.zhNameOrFallback(code, code)
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState())
+                                    .padding(end = 26.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
                                 FilterChip(
-                                    selected = selectedPlayerLeague == code,
-                                    onClick = {
-                                        selectedPlayerLeague = if (selectedPlayerLeague == code) null else code
-                                    },
-                                    label = { Text(zh) },
+                                    selected = selectedPlayerLeague == null,
+                                    onClick = { selectedPlayerLeague = null },
+                                    label = { Text("全赛事") },
+                                    colors = chipColors,
+                                    border = null,
                                 )
+                                CompetitionCatalog.standingsCodes.forEach { code ->
+                                    val zh = CompetitionCatalog.zhNameOrFallback(code, code)
+                                    FilterChip(
+                                        selected = selectedPlayerLeague == code,
+                                        onClick = {
+                                            selectedPlayerLeague = if (selectedPlayerLeague == code) null else code
+                                        },
+                                        label = { Text(zh) },
+                                        colors = chipColors,
+                                        border = null,
+                                    )
+                                }
                             }
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.CenterEnd)
+                                    .width(24.dp)
+                                    .height(34.dp)
+                                    .background(
+                                        Brush.horizontalGradient(
+                                            listOf(Color.Transparent, ThemeTokens.SurfacePure),
+                                        ),
+                                    ),
+                            )
                         }
                     }
                 }
@@ -417,6 +470,12 @@ fun TeamsScreen(
                 ) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("关注赛事订阅（俱 & 国家队 & 青少年）", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        val compChipColors = FilterChipDefaults.filterChipColors(
+                            containerColor = ThemeTokens.SurfaceSubtle,
+                            labelColor = ThemeTokens.InkSecondary,
+                            selectedContainerColor = ThemeTokens.AccentFallback,
+                            selectedLabelColor = ThemeTokens.PureWhite,
+                        )
                         FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -426,6 +485,8 @@ fun TeamsScreen(
                                 FilterChip(
                                     selected = active,
                                     onClick = { onToggleCompetition(comp.code) },
+                                    colors = compChipColors,
+                                    border = null,
                                     label = { Text("${comp.zhName} (${comp.enName})") },
                                 )
                             }
@@ -517,6 +578,14 @@ fun TeamsScreen(
                             )
                         }
                         if (isExpanded) {
+                            val teamChipColors = FilterChipDefaults.filterChipColors(
+                                containerColor = ThemeTokens.SurfaceSubtle,
+                                labelColor = ThemeTokens.InkSecondary,
+                                selectedContainerColor = ThemeTokens.AccentSoftBg,
+                                selectedLabelColor = ThemeTokens.AccentFallback,
+                                iconColor = ThemeTokens.InkMuted,
+                                selectedLeadingIconColor = ThemeTokens.AccentFallback,
+                            )
                             FlowRow(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -534,6 +603,8 @@ fun TeamsScreen(
                                                 TeamAssetCatalog.resolveTeamLogo(en),
                                             )
                                         },
+                                        colors = teamChipColors,
+                                        border = null,
                                         label = {
                                             Text(if (en.equals(zh, true)) zh else "$zh ($en)", fontSize = 11.sp)
                                         },
@@ -952,14 +1023,20 @@ fun PlayerDetailSheet(
                     contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
+                    val detailChipColors = FilterChipDefaults.filterChipColors(
+                        containerColor = ThemeTokens.SurfaceSubtle,
+                        labelColor = ThemeTokens.InkSecondary,
+                        selectedContainerColor = ThemeTokens.AccentFallback,
+                        selectedLabelColor = ThemeTokens.PureWhite,
+                    )
                     item {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilterChip(selected = teamScopeFilter == 0, onClick = { teamScopeFilter = 0 }, label = { Text("全部") })
+                            FilterChip(selected = teamScopeFilter == 0, onClick = { teamScopeFilter = 0 }, label = { Text("全部") }, colors = detailChipColors, border = null)
                             if (player.clubZhName.isNotBlank()) {
-                                FilterChip(selected = teamScopeFilter == 1, onClick = { teamScopeFilter = 1 }, label = { Text(player.clubZhName) })
+                                FilterChip(selected = teamScopeFilter == 1, onClick = { teamScopeFilter = 1 }, label = { Text(player.clubZhName) }, colors = detailChipColors, border = null)
                             }
                             if (player.nationalZhName.isNotBlank()) {
-                                FilterChip(selected = teamScopeFilter == 2, onClick = { teamScopeFilter = 2 }, label = { Text(player.nationalZhName) })
+                                FilterChip(selected = teamScopeFilter == 2, onClick = { teamScopeFilter = 2 }, label = { Text(player.nationalZhName) }, colors = detailChipColors, border = null)
                             }
                         }
                     }
@@ -1012,6 +1089,15 @@ fun PlayerDetailSheet(
                             FilterChip(
                                 selected = isFavorite,
                                 onClick = onToggleFavorite,
+                                colors = FilterChipDefaults.filterChipColors(
+                                    containerColor = ThemeTokens.SurfaceSubtle,
+                                    labelColor = ThemeTokens.InkSecondary,
+                                    selectedContainerColor = ThemeTokens.AccentSoftBg,
+                                    selectedLabelColor = ThemeTokens.AccentFallback,
+                                    iconColor = ThemeTokens.InkMuted,
+                                    selectedLeadingIconColor = ThemeTokens.AccentFallback,
+                                ),
+                                border = null,
                                 label = { Text(if (isFavorite) "已关注" else "关注") },
                                 leadingIcon = {
                                     Icon(
