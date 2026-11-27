@@ -68,7 +68,8 @@ jobs:
       - name: Package Screenshots & Diagnostics Archive
         run: |
           ls -lh screenshots/
-          zip -j v2.6.1-screenshots.zip screenshots/*.png
+          grep -E "FixtureRepository|AndroidRuntime" screenshots/logcat.txt || true
+          zip -j v2.6.1-screenshots.zip screenshots/*.png screenshots/logcat.txt
 
       - name: Upload Screenshots Workflow Artifact
         uses: actions/upload-artifact@v4

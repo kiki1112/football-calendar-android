@@ -155,9 +155,14 @@ class FixtureRepository(
         populateDb: Boolean,
     ) {
         runCatching {
+            val t0 = System.currentTimeMillis()
             val rawText = readBundledSeedRawText()
             val parsed = json.decodeFromString(GitHubFeedResponse.serializer(), rawText)
             val payload = parsed.toSyncPayload(followedCompetitions)
+            Log.i(
+                "FixtureRepository",
+                "seed decoded in ${System.currentTimeMillis() - t0}ms (matches=${payload.matches.size}, standings=${payload.standings.size}, teams=${payload.teams.size})",
+            )
             if (payload.players.isNotEmpty()) {
                 _starPlayers.value = payload.players
                 payload.players.forEach { p ->
@@ -187,9 +192,6 @@ class FixtureRepository(
                 if (payload.standings.isNotEmpty()) {
                     standingDao.replaceAll(payload.standings.map { StandingEntity.fromDomain(it) })
                 }
-                if (payload.teams.isNotEmpty()) {
-                    teamDao.replaceAll(payload.teams.map { TeamEntity.fromDomain(it, json) })
-                }
                 if (prefsRepo.currentPreferences().lastSyncUtc.isBlank()) {
                     val stamp = parsed.generatedAtUtc.ifBlank {
                         DateTimeFormatter.ISO_INSTANT.format(Instant.now())
@@ -201,6 +203,10 @@ class FixtureRepository(
                         standingsSyncedAtMillis = System.currentTimeMillis(),
                     )
                 }
+                if (payload.teams.isNotEmpty()) {
+                    teamDao.replaceAll(payload.teams.map { TeamEntity.fromDomain(it, json) })
+                }
+                Log.i("FixtureRepository", "seed DB populated in ${System.currentTimeMillis() - t0}ms")
             }
         }.onFailure { err ->
             Log.e("FixtureRepository", "seedFromBundledAsset failed (populateDb=$populateDb)", err)

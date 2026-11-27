@@ -265,51 +265,74 @@ def main() -> int:
         adb("shell", "pm", "grant", PKG, perm, check=False)
 
     adb("shell", "am", "start", "-n", ACTIVITY)
-    time.sleep(7.0)
+    time.sleep(5.0)
     dismiss_system_dialogs()
-    time.sleep(1.5)
+
+    # Wait up to ~20s until cold-start seed/sync populates matches & Hero Card on Home
+    for _ in range(12):
+        nodes = dump_nodes()
+        texts = [str(n["text"]).strip() for n in nodes if str(n["text"]).strip()]
+        if any("下一场焦点" in t or "已加载" in t or "已同步" in t for t in texts):
+            break
+        time.sleep(1.5)
+    time.sleep(2.0)
 
     # 1. Home Calendar Overview (Hero countdown card + filter pills + calendar grid)
     screencap(out_dir, "01_calendar_home.png")
 
-    # 2. Switch calendar date to 25 (Nov 25 Beijing Watch-Night: UCL Barcelona, Man Utd, Liverpool, Inter, PSG, Bayern — all with full lineups/events/stats/commentary!)
+    # 2. Switch calendar date to 25 (Nov 25 Beijing Watch-Night: 43 matches!)
     if not tap_match(exact="25", min_y=int(h * 0.35), max_y=int(h * 0.90), prefer_last=True, wait_s=1.8):
         swipe_up(w, h, dist_ratio=0.18, wait_s=1.0)
         if not tap_match(exact="25", min_y=int(h * 0.30), max_y=int(h * 0.90), prefer_last=True, wait_s=1.8):
             tap_match(exact="26", min_y=int(h * 0.48), max_y=int(h * 0.88), prefer_last=True, wait_s=1.8)
-    swipe_up(w, h, dist_ratio=0.48, wait_s=1.6)
+    swipe_up(w, h, dist_ratio=0.50, wait_s=1.6)
     screencap(out_dir, "02_calendar_day_matches.png")
 
-    # 3. Tap a rich finished UCL/UEL match card on Home Calendar -> Blurred Popup (图二: 赛况时间轴)
-    opened_match = tap_any(
-        ["曼联", "利物浦", "巴塞罗那", "国际米兰", "巴黎圣日耳曼", "拜仁慕尼黑", "水晶宫", "已完赛", "进行中"],
-        wait_s=3.0,
-        min_y=int(h * 0.12),
-        max_y=int(h * 0.87),
-    )
-    if not opened_match:
-        tap_xy(w // 2, int(h * 0.52), "fallback_match_card", wait_s=3.0)
+    # 3. Tap first visible match card -> Blurred Popup (图二: 赛况时间轴)
+    if not tap_any(
+        ["圣何塞地震", "瓦恩拉乌雷", "曼联", "利物浦", "巴塞罗那", "国际米兰", "巴黎圣日耳曼", "拜仁慕尼黑"],
+        wait_s=2.5,
+        min_y=int(h * 0.45),
+        max_y=int(h * 0.86),
+    ):
+        tap_xy(w // 2, int(h * 0.56), "fallback_match_card", wait_s=2.5)
+    # Wait until ModalBottomSheet finishes sliding up and loads live events
+    for _ in range(8):
+        nodes = dump_nodes()
+        if find_node(nodes, exact="阵容", min_y=int(h * 0.08), max_y=int(h * 0.50)):
+            break
+        time.sleep(0.8)
+    time.sleep(1.5)
     screencap(out_dir, "03_match_popup_events.png")
 
     # 4. Switch to 图文直播 inside 赛况 Tab
-    if tap_match(contains="图文直播", min_y=int(h * 0.15), max_y=int(h * 0.65), wait_s=1.6):
-        screencap(out_dir, "04_match_popup_commentary.png")
+    if not tap_match(contains="图文直播", min_y=int(h * 0.25), max_y=int(h * 0.65), wait_s=2.0):
+        tap_xy(int(w * 0.375), int(h * 0.379), "fallback_commentary_pill", wait_s=2.0)
+    screencap(out_dir, "04_match_popup_commentary.png")
 
     # 5. Switch to 阵容 Tab -> 绿色球场战术阵型图 + 替补与主帅 (图一!)
-    if tap_match(exact="阵容", min_y=int(h * 0.08), max_y=int(h * 0.50), wait_s=2.8):
-        screencap(out_dir, "05_match_lineup_pitch.png")
-        swipe_up(w, h, dist_ratio=0.48, wait_s=1.5)
-        screencap(out_dir, "06_match_lineup_bench.png")
+    if not tap_match(exact="阵容", min_y=int(h * 0.15), max_y=int(h * 0.45), wait_s=2.8):
+        tap_xy(int(w * 0.375), int(h * 0.296), "fallback_lineup_tab", wait_s=2.8)
+    screencap(out_dir, "05_match_lineup_pitch.png")
+    swipe_up(w, h, dist_ratio=0.62, wait_s=1.0)
+    swipe_up(w, h, dist_ratio=0.58, wait_s=1.5)
+    screencap(out_dir, "06_match_lineup_bench.png")
 
-    # 6. Switch to 统计 Tab -> 球队统计 & 球员数据 (图三!)
-    if tap_match(exact="统计", min_y=int(h * 0.08), max_y=int(h * 0.50), wait_s=2.0):
-        screencap(out_dir, "07_match_stats_team.png")
-        if tap_match(exact="球员数据", min_y=int(h * 0.15), max_y=int(h * 0.60), wait_s=2.0):
-            screencap(out_dir, "08_match_stats_players.png")
+    # 6. Switch to 统计 Tab -> scroll back to top (shared LazyColumn!) -> 球队统计 & 球员数据 (图三!)
+    if not tap_match(exact="统计", min_y=int(h * 0.15), max_y=int(h * 0.45), wait_s=1.8):
+        tap_xy(int(w * 0.625), int(h * 0.296), "fallback_stats_tab", wait_s=1.8)
+    swipe_down(w, h, dist_ratio=0.65, wait_s=0.8)
+    swipe_down(w, h, dist_ratio=0.65, wait_s=1.4)
+    screencap(out_dir, "07_match_stats_team.png")
+    if not tap_match(exact="球员数据", min_y=int(h * 0.25), max_y=int(h * 0.55), wait_s=2.2):
+        tap_xy(int(w * 0.72), int(h * 0.375), "fallback_player_stats_pill", wait_s=2.2)
+    screencap(out_dir, "08_match_stats_players.png")
 
-    # 7. Switch to 交锋积分 Tab
-    if tap_match(exact="交锋积分", min_y=int(h * 0.08), max_y=int(h * 0.50), wait_s=2.5):
-        screencap(out_dir, "09_match_h2h_standings.png")
+    # 7. Switch to 交锋积分 Tab (already at top)
+    if not tap_match(exact="交锋积分", min_y=int(h * 0.15), max_y=int(h * 0.45), wait_s=2.5):
+        tap_xy(int(w * 0.875), int(h * 0.296), "fallback_h2h_tab", wait_s=2.5)
+    swipe_down(w, h, dist_ratio=0.45, wait_s=1.2)
+    screencap(out_dir, "09_match_h2h_standings.png")
 
     # Dismiss popup modal back to Home Calendar
     dismiss_modal(w, h, attempts=1)
@@ -348,8 +371,10 @@ def main() -> int:
             tap_match(contains="返回球员档案", max_y=int(h * 0.25), wait_s=1.2)
         dismiss_modal(w, h, attempts=2)
 
-    if tap_match(contains="主队档案", min_y=int(h * 0.08), max_y=int(h * 0.35), wait_s=2.0):
-        screencap(out_dir, "18_players_fav_teams.png")
+    swipe_down(w, h, dist_ratio=0.35, wait_s=1.0)
+    if not tap_match(contains="主队档案", min_y=int(h * 0.08), max_y=int(h * 0.40), wait_s=2.0):
+        tap_xy(int(w * 0.72), int(h * 0.167), "fallback_fav_teams_segment", wait_s=2.0)
+    screencap(out_dir, "18_players_fav_teams.png")
 
     # 10. Settings Tab (设置) + Trigger In-App Live Broadcast Banner!
     ensure_app_foreground()
