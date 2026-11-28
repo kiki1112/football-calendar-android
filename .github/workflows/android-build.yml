@@ -31,15 +31,9 @@ jobs:
           gradle-version: '8.9'
 
       - name: Run Unit Tests
-        env:
-          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
-          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
         run: gradle testDebugUnitTest --stacktrace
 
       - name: Build Debug APK
-        env:
-          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
-          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
         run: gradle assembleDebug --stacktrace
 
       - name: Upload Debug APK Artifact

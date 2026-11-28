@@ -332,6 +332,7 @@ fun CalendarScreen(
                     isExpanded = state.isMonthExpanded,
                     matchesByDate = state.matchesByDate,
                     favoriteTeams = state.prefs.favoriteTeams,
+                    lotteryModeActive = state.lotteryFilterOnly,
                     onSelectDate = onSelectDate,
                     onPrevMonth = onPrevMonth,
                     onNextMonth = onNextMonth,
@@ -606,13 +607,14 @@ private fun AppleCalendarCard(
     isExpanded: Boolean,
     matchesByDate: Map<LocalDate, List<MatchItem>>,
     favoriteTeams: Set<String>,
+    lotteryModeActive: Boolean = false,
     onSelectDate: (LocalDate) -> Unit,
     onPrevMonth: () -> Unit,
     onNextMonth: () -> Unit,
     onJumpToday: () -> Unit,
     onToggleExpanded: () -> Unit,
 ) {
-    val today = LocalDate.now()
+    val today = LocalDate.now(MatchTimeFormatter.BEIJING_ZONE)
     val haptic = LocalHapticFeedback.current
     Surface(
         modifier = Modifier
@@ -767,6 +769,7 @@ private fun AppleCalendarCard(
                                             .background(
                                                 when {
                                                     isSelected -> ThemeTokens.PureWhite
+                                                    lotteryModeActive -> ThemeTokens.LotteryGold
                                                     hasFavorite -> ThemeTokens.LivePulse
                                                     else -> ThemeTokens.InkMuted
                                                 },
@@ -887,11 +890,8 @@ private fun AppleMatchCard(
                                 color = ThemeTokens.LotteryGoldBg,
                                 shape = RoundedCornerShape(6.dp),
                             ) {
-                                val handicapText = match.lotteryHandicap?.let {
-                                    if (it > 0) " +$it" else " $it"
-                                }.orEmpty()
                                 Text(
-                                    text = "${match.lotteryCode}$handicapText",
+                                    text = formatLotteryBadgeText(match.lotteryCode, match.lotteryHandicap),
                                     color = ThemeTokens.LotteryGold,
                                     style = TextStyle(
                                         fontSize = 11.sp,
@@ -940,11 +940,8 @@ private fun AppleMatchCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         if (lotteryModeActive && match.lotteryDeadlineUtc != null && match.lotteryDeadlineUtc > 0L) {
-                            val deadlineClock = MatchTimeFormatter.formatKickoffTime(
-                                Instant.ofEpochMilli(match.lotteryDeadlineUtc).toString(),
-                            )
                             Text(
-                                text = "截 $deadlineClock",
+                                text = formatLotteryDeadlineLabel(match.lotteryDeadlineUtc),
                                 color = ThemeTokens.LotteryGold,
                                 style = TextStyle(
                                     fontSize = 11.sp,
@@ -2867,6 +2864,7 @@ private fun PitchPlayerBadgeNode(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(modifier = Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+            var hasLoadedPhoto by remember(player.portraitUrl) { mutableStateOf(false) }
             Box(
                 modifier = Modifier
                     .size(38.dp)
@@ -2880,9 +2878,10 @@ private fun PitchPlayerBadgeNode(
                     size = 36.dp,
                     shirtNumber = player.number,
                     teamColor = teamColor,
+                    onPhotoLoadedChanged = { hasLoadedPhoto = it },
                 )
             }
-            if (player.number > 0) {
+            if (player.number > 0 && hasLoadedPhoto) {
                 Surface(
                     color = ThemeTokens.PitchBadgeScrim,
                     shape = CircleShape,
@@ -3879,4 +3878,19 @@ private fun TimelineEventCard(
             }
         }
     }
+}
+
+internal fun formatLotteryBadgeText(lotteryCode: String, lotteryHandicap: Int?): String {
+    val cleanCode = lotteryCode.trim()
+    val handicapText = lotteryHandicap?.let { h ->
+        if (h > 0) " · 让球 +$h" else " · 让球 $h"
+    }.orEmpty()
+    return "$cleanCode$handicapText"
+}
+
+internal fun formatLotteryDeadlineLabel(deadlineUtcMillis: Long): String {
+    val clock = MatchTimeFormatter.formatKickoffTime(
+        Instant.ofEpochMilli(deadlineUtcMillis).toString(),
+    )
+    return "停售 $clock"
 }

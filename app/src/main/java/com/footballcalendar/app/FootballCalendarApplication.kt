@@ -10,7 +10,6 @@ import com.footballcalendar.app.data.local.AppDatabase
 import com.footballcalendar.app.data.preferences.UserPreferencesRepository
 import com.footballcalendar.app.data.remote.DelegatingFixtureDataSource
 import com.footballcalendar.app.data.remote.FeedApiService
-import com.footballcalendar.app.data.remote.FootballDataApiFixtureDataSource
 import com.footballcalendar.app.data.remote.GitHubPagesFixtureDataSource
 import com.footballcalendar.app.data.remote.MockFixtureDataSource
 import com.footballcalendar.app.data.repository.FixtureRepository
@@ -80,7 +79,7 @@ class AppContainer(application: Application) {
         .build()
 
     private val retrofit: Retrofit = Retrofit.Builder()
-        .baseUrl("https://api.football-data.org/")
+        .baseUrl("https://kiki1112.github.io/football-calendar-android/")
         .client(okHttpClient)
         .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
         .build()
@@ -90,7 +89,6 @@ class AppContainer(application: Application) {
     private val fixtureDataSource = DelegatingFixtureDataSource(
         mockDataSource = MockFixtureDataSource(),
         githubPagesDataSource = GitHubPagesFixtureDataSource(apiService),
-        footballDataApiDataSource = FootballDataApiFixtureDataSource(apiService),
     )
 
     val fixtureRepository = FixtureRepository(

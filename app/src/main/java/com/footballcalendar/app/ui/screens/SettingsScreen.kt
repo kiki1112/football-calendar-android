@@ -41,10 +41,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.footballcalendar.app.model.DataSourceMode
@@ -62,7 +61,7 @@ import com.footballcalendar.app.util.MatchTimeFormatter
 @Composable
 fun SettingsScreen(
     state: CalendarUiState,
-    onSaveDataSource: (DataSourceMode, String, String, String) -> Unit,
+    onSaveDataSource: (DataSourceMode, String) -> Unit,
     onSimulateDemoUpdate: () -> Unit,
     onUpdateSyncSettings: (Boolean, Int, Boolean) -> Unit,
     onUpdateDisplayAndNotifications: (Boolean, Boolean, Int, Boolean, Boolean) -> Unit,
@@ -77,8 +76,6 @@ fun SettingsScreen(
 
     var selectedMode by remember(state.prefs.dataSourceMode) { mutableStateOf(state.prefs.dataSourceMode) }
     var githubPagesUrl by remember(state.prefs.githubPagesUrl) { mutableStateOf(state.prefs.githubPagesUrl) }
-    var customFdKey by remember(state.prefs.footballDataApiKey) { mutableStateOf(state.prefs.footballDataApiKey) }
-    var customAfKey by remember(state.prefs.apiFootballKey) { mutableStateOf(state.prefs.apiFootballKey) }
 
     var autoSyncEnabled by remember(state.prefs.autoSyncEnabled) { mutableStateOf(state.prefs.autoSyncEnabled) }
     var intervalHours by remember(state.prefs.syncIntervalHours) { mutableIntStateOf(state.prefs.syncIntervalHours) }
@@ -93,8 +90,6 @@ fun SettingsScreen(
     LaunchedEffect(state.prefs) {
         selectedMode = state.prefs.dataSourceMode
         githubPagesUrl = state.prefs.githubPagesUrl
-        customFdKey = state.prefs.footballDataApiKey
-        customAfKey = state.prefs.apiFootballKey
         autoSyncEnabled = state.prefs.autoSyncEnabled
         intervalHours = state.prefs.syncIntervalHours
         wifiOnly = state.prefs.wifiOnlySync
@@ -228,18 +223,60 @@ fun SettingsScreen(
             }
         }
 
-        // Data Source Group (Keys built into BuildConfig & GitHub Secrets - never exposed in UI)
+        // Cloud Sync Status Group (0-Yuan Cloud Mid-Platform - Zero API Keys in Client)
         item {
+            val totalMatchesCount = state.allMatches.size
+            val lotteryMatchesCount = remember(state.allMatches) {
+                state.allMatches.count { !it.lotteryCode.isNullOrBlank() }
+            }
+            val syncClockText = remember(state.prefs.lastSyncUtc) {
+                state.prefs.lastSyncUtc.takeIf { it.isNotBlank() }?.let { raw ->
+                    MatchTimeFormatter.formatMonthDayTime(raw).ifBlank { raw }
+                } ?: "尚未手动触发（已启用本地快照）"
+            }
+
             Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-                Text("数据源与实时接口配置", style = MaterialTheme.typography.labelLarge, color = InkSecondary, modifier = Modifier.padding(start = 6.dp, bottom = 6.dp))
-                Surface(color = Color.White, shape = RoundedCornerShape(20.dp)) {
+                Text(
+                    text = "云端同步状态卡片",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = ThemeTokens.InkSecondary,
+                    modifier = Modifier.padding(start = 6.dp, bottom = 6.dp),
+                )
+                Surface(color = ThemeTokens.SurfacePure, shape = RoundedCornerShape(20.dp)) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Surface(color = AppleRedTint, shape = RoundedCornerShape(12.dp)) {
-                            Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                val fdStatus = if (state.prefs.hasBuiltInFootballDataKey()) "已内置加密部署（无需填写）" else "仅通过 GitHub Actions 同步"
-                                val afStatus = if (state.prefs.hasBuiltInApiFootballKey()) "已内置加密部署（Free 100次/日 · 支持实时事件）" else "仅通过 GitHub Actions 同步"
-                                Text("Football-Data：$fdStatus", style = MaterialTheme.typography.labelSmall, color = AppleRed, fontWeight = FontWeight.Bold)
-                                Text("API-Football：$afStatus", style = MaterialTheme.typography.labelSmall, color = InkPrimary, fontWeight = FontWeight.SemiBold)
+                        Surface(color = ThemeTokens.AccentSoftBg, shape = RoundedCornerShape(14.dp)) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Text(
+                                    text = if (selectedMode == DataSourceMode.GITHUB_PAGES) {
+                                        "● 云端 0 元聚合中台已连接（客户端零密钥）"
+                                    } else {
+                                        "● 离线精选缓存模式（弱网/无网保护）"
+                                    },
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = ThemeTokens.BrandCrimson,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                                Text(
+                                    text = "上次全量同步：$syncClockText",
+                                    style = TextStyle(
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontFeatureSettings = "tnum",
+                                    ),
+                                    color = ThemeTokens.InkPrimary,
+                                )
+                                Text(
+                                    text = "已缓存 ${totalMatchesCount} 场赛程 · 体彩竞彩开售 ${lotteryMatchesCount} 场",
+                                    style = TextStyle(
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        fontFeatureSettings = "tnum",
+                                    ),
+                                    color = ThemeTokens.InkSecondary,
+                                )
                             }
                         }
 
@@ -247,14 +284,15 @@ fun SettingsScreen(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
                                     .clickable { selectedMode = mode }
                                     .padding(vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 RadioButton(selected = selectedMode == mode, onClick = { selectedMode = mode })
                                 Column(modifier = Modifier.padding(start = 8.dp)) {
-                                    Text(mode.displayName, fontWeight = FontWeight.SemiBold, color = InkPrimary)
-                                    Text(mode.description, style = MaterialTheme.typography.bodySmall, color = InkSecondary)
+                                    Text(mode.displayName, fontWeight = FontWeight.SemiBold, color = ThemeTokens.InkPrimary)
+                                    Text(mode.description, style = MaterialTheme.typography.bodySmall, color = ThemeTokens.InkSecondary)
                                 }
                             }
                         }
@@ -264,51 +302,33 @@ fun SettingsScreen(
                                 value = githubPagesUrl,
                                 onValueChange = { githubPagesUrl = it },
                                 modifier = Modifier.fillMaxWidth(),
-                                label = { Text("GitHub Pages 订阅地址") },
-                                singleLine = true,
-                            )
-                        }
-
-                        if (selectedMode == DataSourceMode.FOOTBALL_DATA_API) {
-                            OutlinedTextField(
-                                value = customFdKey,
-                                onValueChange = { customFdKey = it },
-                                modifier = Modifier.fillMaxWidth(),
-                                label = { Text("Football-Data Key（留空即用内置 Key）") },
-                                placeholder = { Text("已安全内置部署，无需重复输入") },
-                                visualTransformation = PasswordVisualTransformation(),
-                                singleLine = true,
-                            )
-                            OutlinedTextField(
-                                value = customAfKey,
-                                onValueChange = { customAfKey = it },
-                                modifier = Modifier.fillMaxWidth(),
-                                label = { Text("API-Football Key（留空即用内置 Key）") },
-                                placeholder = { Text("已安全内置部署，无需重复输入") },
-                                visualTransformation = PasswordVisualTransformation(),
+                                label = { Text("云端聚合订阅地址 (fixtures.json)") },
                                 singleLine = true,
                             )
                         }
 
                         Button(
-                            onClick = { onSaveDataSource(selectedMode, githubPagesUrl, customFdKey, customAfKey) },
+                            onClick = { onSaveDataSource(selectedMode, githubPagesUrl) },
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(14.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = AppleRed),
+                            colors = ButtonDefaults.buttonColors(containerColor = ThemeTokens.BrandCrimson),
                             enabled = !state.isSyncing,
                         ) {
-                            Text(if (state.isSyncing) "正在同步..." else "保存并立即全量同步", fontWeight = FontWeight.Bold)
+                            Text(
+                                text = if (state.isSyncing) "正在同步云端全量与体彩赛程..." else "保存并立即全量同步",
+                                fontWeight = FontWeight.Bold,
+                            )
                         }
 
                         Surface(
-                            color = AppleRedTint,
+                            color = ThemeTokens.SurfaceSubtle,
                             shape = RoundedCornerShape(12.dp),
                         ) {
                             Text(
-                                text = "● 已默认开启 ESPN + API-Football 零延迟实时同步：进行中比分每 15 秒、比赛详情页事件/阵容每 10 秒全自动更新，无需任何手动按钮",
+                                text = "● 每 30 分钟云端自动同步赛程、积分榜与体彩竞彩开售清单（09:00/15:00/21:00 加频刷新），客户端无需配置任何第三方 API Key",
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                                 style = MaterialTheme.typography.bodySmall,
-                                color = AppleRed,
+                                color = ThemeTokens.InkSecondary,
                             )
                         }
 

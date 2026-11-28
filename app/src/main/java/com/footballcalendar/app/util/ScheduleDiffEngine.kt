@@ -68,13 +68,34 @@ object ScheduleDiffEngine {
             }
         }
 
+        // Preserve existing lottery tags only if the incoming feed payload carries zero Sporttery tags
+        // (guards against transient upstream outage without keeping expired tags when Sporttery is healthy).
+        val incomingHasLottery = incoming.any { !it.lotteryCode.isNullOrBlank() }
+        val normalizedIncoming = incoming.map { match ->
+            val prev = existingById[match.id]
+            val hydratedLottery = if (!incomingHasLottery && match.lotteryCode.isNullOrBlank() && prev?.lotteryCode != null) {
+                match.copy(
+                    lotteryCode = prev.lotteryCode,
+                    lotteryHandicap = prev.lotteryHandicap,
+                    lotteryDeadlineUtc = prev.lotteryDeadlineUtc,
+                )
+            } else {
+                match
+            }
+            if (prev?.isFinalized == true && !hydratedLottery.isFinalized && hydratedLottery.status == MatchStatus.FINISHED) {
+                hydratedLottery.copy(isFinalized = true)
+            } else {
+                hydratedLottery
+            }
+        }
+
         // Only preserve historical FINISHED matches outside the latest fetch window.
         // Never keep un-played/scheduled ghosts from stale caches or old sources.
-        val incomingIds = incoming.asSequence().map { it.id }.toSet()
+        val incomingIds = normalizedIncoming.asSequence().map { it.id }.toSet()
         val preservedFinished = existing.filter {
             it.id !in incomingIds && it.status == MatchStatus.FINISHED
         }
-        val merged = (incoming + preservedFinished).sortedBy { it.utcDate }
+        val merged = (normalizedIncoming + preservedFinished).sortedBy { it.utcDate }
 
         return DiffResult(
             mergedMatches = merged,

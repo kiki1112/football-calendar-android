@@ -57,8 +57,8 @@ import java.time.LocalDate
 import java.time.YearMonth
 
 data class CalendarUiState(
-    val currentMonth: YearMonth = YearMonth.now(),
-    val selectedDate: LocalDate = LocalDate.now(),
+    val currentMonth: YearMonth = YearMonth.now(MatchTimeFormatter.BEIJING_ZONE),
+    val selectedDate: LocalDate = LocalDate.now(MatchTimeFormatter.BEIJING_ZONE),
     val isMonthExpanded: Boolean = false,
     val lotteryFilterOnly: Boolean = false,
     val calendarFilterTab: Int = 0, // 0=全部关注, 1=只看主队, 2=必看清单
@@ -110,8 +110,8 @@ data class CalendarUiState(
 }
 
 private data class UiInteractionState(
-    val currentMonth: YearMonth = YearMonth.now(),
-    val selectedDate: LocalDate = LocalDate.now(),
+    val currentMonth: YearMonth = YearMonth.now(MatchTimeFormatter.BEIJING_ZONE),
+    val selectedDate: LocalDate = LocalDate.now(MatchTimeFormatter.BEIJING_ZONE),
     val isMonthExpanded: Boolean = false,
     val lotteryFilterOnly: Boolean = false,
     val calendarFilterTab: Int = 0,
@@ -239,6 +239,13 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
         )
     }.flowOn(Dispatchers.Default)
 
+    private data class RoomDaySlice(
+        val dateKey: String,
+        val isLotteryOnly: Boolean,
+        val watchNightGrouping: Boolean,
+        val matches: List<MatchItem>,
+    )
+
     @OptIn(ExperimentalCoroutinesApi::class)
     private val selectedDayRoomFlow = combine(
         uiInteraction.map { it.selectedDate to it.lotteryFilterOnly }.distinctUntilChanged(),
@@ -250,7 +257,14 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
             dateKey = dateKey,
             isLotteryOnly = lotteryOnly,
             watchNightGrouping = watchNightGrouping,
-        )
+        ).map { list ->
+            RoomDaySlice(
+                dateKey = dateKey,
+                isLotteryOnly = lotteryOnly,
+                watchNightGrouping = watchNightGrouping,
+                matches = list,
+            )
+        }
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -267,7 +281,7 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
         selectedMatchDetailRoomFlow,
         prefsRepo.preferencesFlow,
         uiInteraction,
-    ) { core, roomDayMatches, roomMatchDetail, prefs, ui ->
+    ) { core, roomDaySlice, roomMatchDetail, prefs, ui ->
         val allMatches = core.matches
         val zoneId = MatchTimeFormatter.BEIJING_ZONE
         fun matchAllowed(match: MatchItem): Boolean {
@@ -296,10 +310,17 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
             ) ?: LocalDate.now(zoneId)
         }
 
-        val dayMatches = roomDayMatches
-            .filter(::matchAllowed)
-            .ifEmpty { grouped[ui.selectedDate].orEmpty() }
-            .sortedBy { it.utcDate }
+        val dayMatches = resolveDayMatches(
+            selectedDate = ui.selectedDate,
+            lotteryFilterOnly = ui.lotteryFilterOnly,
+            watchNightGrouping = prefs.watchNightGrouping,
+            roomDateKey = roomDaySlice.dateKey,
+            roomLotteryOnly = roomDaySlice.isLotteryOnly,
+            roomWatchNightGrouping = roomDaySlice.watchNightGrouping,
+            roomMatches = roomDaySlice.matches,
+            fallbackGroupedMatches = grouped[ui.selectedDate].orEmpty(),
+            matchAllowed = ::matchAllowed,
+        )
 
         val now = Instant.now().minusSeconds(1800)
         val upcomingFollowed = allMatches.filter { match ->
@@ -401,7 +422,7 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun jumpToToday() {
-        val today = LocalDate.now()
+        val today = LocalDate.now(MatchTimeFormatter.BEIJING_ZONE)
         uiInteraction.update { it.copy(selectedDate = today, currentMonth = YearMonth.from(today)) }
     }
 
@@ -1065,9 +1086,9 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun saveDataSource(mode: DataSourceMode, githubPagesUrl: String, apiKey: String, apiFootballKey: String = "") {
+    fun saveDataSource(mode: DataSourceMode, githubPagesUrl: String) {
         viewModelScope.launch {
-            prefsRepo.updateDataSource(mode, githubPagesUrl, apiKey, apiFootballKey)
+            prefsRepo.updateDataSource(mode, githubPagesUrl)
             syncNow(simulateDemoChange = false)
         }
     }
@@ -1161,6 +1182,38 @@ class CalendarViewModel(application: Application) : AndroidViewModel(application
     )
 
     companion object {
+        internal fun resolveDayMatches(
+            selectedDate: LocalDate,
+            lotteryFilterOnly: Boolean,
+            watchNightGrouping: Boolean,
+            roomDateKey: String,
+            roomLotteryOnly: Boolean,
+            roomWatchNightGrouping: Boolean,
+            roomMatches: List<MatchItem>,
+            fallbackGroupedMatches: List<MatchItem>,
+            matchAllowed: (MatchItem) -> Boolean,
+        ): List<MatchItem> {
+            val selectedDateKey = selectedDate.toString()
+            val roomIsFresh = roomDateKey == selectedDateKey &&
+                roomLotteryOnly == lotteryFilterOnly &&
+                roomWatchNightGrouping == watchNightGrouping
+
+            val candidates = if (roomIsFresh) roomMatches else fallbackGroupedMatches
+            val filtered = candidates.filter { m ->
+                val displayDate = MatchTimeFormatter.displayDateFor(
+                    utcIso = m.utcDate,
+                    zoneId = MatchTimeFormatter.BEIJING_ZONE,
+                    watchNightGrouping = watchNightGrouping,
+                )
+                (displayDate == null || displayDate == selectedDate) && matchAllowed(m)
+            }
+            return if (filtered.isEmpty() && !lotteryFilterOnly) {
+                fallbackGroupedMatches.filter(matchAllowed).sortedBy { it.utcDate }
+            } else {
+                filtered.sortedBy { it.utcDate }
+            }
+        }
+
         val Factory: ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 val app = this[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY] as Application

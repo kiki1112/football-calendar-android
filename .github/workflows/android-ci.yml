@@ -61,9 +61,6 @@ jobs:
           gradle-version: "8.9"
 
       - name: Locate Gradle project & run tests + assembleDebug
-        env:
-          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
-          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
         run: |
           if [ -f "./gradlew" ]; then
             PROJECT_DIR="."

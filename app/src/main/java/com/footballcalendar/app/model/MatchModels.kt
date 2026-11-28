@@ -100,13 +100,13 @@ enum class MatchStatus(val zhLabel: String) {
 }
 
 enum class DataSourceMode(val displayName: String, val description: String) {
-    DEMO("演示模式（离线可用）", "内置精选赛程、积分榜与球员榜，可模拟改期"),
-    GITHUB_PAGES("GitHub Pages + ESPN 实时双引擎（推荐）", "后台全量聚合 + ESPN 零配额秒级自动同步实时比分与赛况"),
-    FOOTBALL_DATA_API("官方实时 API 直连（含 ESPN）", "使用内置部署密钥直连官方数据源 + ESPN 实时赛况");
+    GITHUB_PAGES("云端自动订阅模式（推荐）", "订阅 GitHub 云端 0 元中台：赛程、体彩竞彩与实时赛况"),
+    DEMO("离线缓存模式（本地快照）", "优先使用内置离线赛程、体彩参考快照与本地 Room 缓存");
 
     companion object {
         fun fromName(name: String?): DataSourceMode {
-            return entries.firstOrNull { it.name == name } ?: GITHUB_PAGES
+            if (name == "DEMO") return DEMO
+            return GITHUB_PAGES
         }
     }
 }

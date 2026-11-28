@@ -17,13 +17,6 @@ android {
         versionCode = 10
         versionName = "2.6.1"
 
-        val builtInFootballDataKey = ((project.findProperty("FOOTBALL_DATA_API_KEY") as? String)
-            ?: System.getenv("FOOTBALL_DATA_API_KEY") ?: "").replace("\\", "\\\\").replace("\"", "\\\"")
-        val builtInApiFootballKey = ((project.findProperty("API_FOOTBALL_KEY") as? String)
-            ?: System.getenv("API_FOOTBALL_KEY") ?: "").replace("\\", "\\\\").replace("\"", "\\\"")
-        buildConfigField("String", "BUILTIN_FOOTBALL_DATA_KEY", "\"$builtInFootballDataKey\"")
-        buildConfigField("String", "BUILTIN_API_FOOTBALL_KEY", "\"$builtInApiFootballKey\"")
-
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

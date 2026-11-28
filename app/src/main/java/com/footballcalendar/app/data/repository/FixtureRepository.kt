@@ -461,32 +461,7 @@ class FixtureRepository(
                 }
             }
 
-            // 2. Smart quota-safe API-Football supplement ONLY if non-ESPN leagues have live/kickoff windows
-            val afOnlyCodes = setOf("J2", "KL1", "U20AC", "INT")
-            val nowInstant = Instant.now()
-            val hasActiveAfWindow = existing.any { m ->
-                m.competitionCode in afOnlyCodes && (
-                    m.status.isLive || MatchTimeFormatter.parseInstant(m.utcDate)?.let { ko ->
-                        val mins = Duration.between(ko, nowInstant).toMinutes()
-                        mins in -15..165
-                    } == true
-                )
-            }
-            val afKey = prefs.effectiveApiFootballKey()
-            val nowMs = System.currentTimeMillis()
-            if (afKey.isNotEmpty() && hasActiveAfWindow && (nowMs - lastAfLiveSweepMillis) >= 180_000L) {
-                lastAfLiveSweepMillis = nowMs
-                runCatching {
-                    val afResp = apiService.fetchApiFootballFixtures(
-                        url = "https://v3.football.api-sports.io/fixtures?live=all",
-                        apiKey = afKey,
-                    )
-                    afResp.response.mapNotNull { it.toMatchItem() }.forEach { live ->
-                        applyLiveUpdate(live, existing, prefs.followedCompetitions, changedItems)
-                    }
-                }
-            }
-
+            // 2. Persist updated live scores from zero-quota public streams into Room
             if (changedItems.isNotEmpty()) {
                 val existingDetailIds = matchDetailDao.getAllMatchIdsOnce().toSet()
                 matchDao.upsertAll(
@@ -715,47 +690,7 @@ class FixtureRepository(
                 return@runCatching cached
             }
 
-            // 2. Fallback to API-Football (e.g. J2 / K League 1 / U20 Asian Cup)
-            val prefs = prefsRepo.currentPreferences()
-            val afKey = prefs.effectiveApiFootballKey()
-            require(afKey.isNotEmpty()) { "实时赛况网络超时，请点击右上角或下拉刷新重试" }
-
-            var targetFixtureId = match.apiFootballFixtureId
-                ?: match.id.removePrefix("af-").toIntOrNull()
-
-            if (targetFixtureId == null) {
-                val utcDateStr = MatchTimeFormatter.parseInstant(match.utcDate)
-                    ?.atZone(ZoneOffset.UTC)
-                    ?.toLocalDate()
-                    ?.toString()
-                if (utcDateStr != null) {
-                    val dayResp = runCatching {
-                        apiService.fetchApiFootballFixtures(
-                            url = "https://v3.football.api-sports.io/fixtures?date=$utcDateStr",
-                            apiKey = afKey,
-                        )
-                    }.getOrNull()
-                    targetFixtureId = dayResp?.response?.firstOrNull { row ->
-                        TeamLocalization.localizeTeam(row.teams.home.name) == match.homeTeamZhName &&
-                            TeamLocalization.localizeTeam(row.teams.away.name) == match.awayTeamZhName
-                    }?.fixture?.id
-                }
-            }
-
-            require(targetFixtureId != null && targetFixtureId > 0) {
-                "实时赛况连接暂时受阻，或比赛尚未开赛（可稍候下拉刷新赛程获取预缓存详情）"
-            }
-
-            val detailResp = apiService.fetchApiFootballFixtures(
-                url = "https://v3.football.api-sports.io/fixtures?id=$targetFixtureId",
-                apiKey = afKey,
-            )
-            val row = detailResp.response.firstOrNull() ?: error("暂无比赛过程详情")
-            val detail = enrichDetailLineupPortraits(row.toLiveDetail(match.id))
-            liveDetailCache[match.id] = detail
-            matchDetailDao.upsert(MatchDetailEntity.fromDomain(detail, json))
-            persistDetailOntoMatch(match.id, detail, afFixtureId = targetFixtureId)
-            detail
+            error("实时赛况暂不可用，请下拉刷新云端快照或稍后重试")
         }
     }
 
@@ -819,18 +754,10 @@ class FixtureRepository(
 
             coroutineScope {
                 val historyDeferred = async {
-                    val fetched = mutableListOf<MatchItem>()
-                    if (espnRef != null) {
-                        fetched += fetchEspnTeamMatches(espnRef.first, espnRef.second)
-                    } else if (teamId > 0) {
-                        val prefs = prefsRepo.currentPreferences()
-                        val fdKey = prefs.effectiveFootballDataKey()
-                        if (fdKey.isNotEmpty() && compCode !in setOf("J2", "KL1", "U20AC")) {
-                            runCatching {
-                                apiService.fetchFootballDataTeamMatches(fdKey, teamId, status = "FINISHED", limit = 20)
-                                    .matches.mapNotNull { it.toDomain() }
-                            }.getOrNull()?.let { fetched += it }
-                        }
+                    val fetched = if (espnRef != null) {
+                        fetchEspnTeamMatches(espnRef.first, espnRef.second)
+                    } else {
+                        emptyList()
                     }
                     dedupeAndSortTeamMatches(localMatches + fetched)
                 }
@@ -890,29 +817,17 @@ class FixtureRepository(
             val homeRef = resolveEspnTeamRef(match.homeTeamName, match.homeTeamZhName, match.competitionCode)
             val awayRef = resolveEspnTeamRef(match.awayTeamName, match.awayTeamZhName, match.competitionCode)
 
-            val (homeEspn, awayEspn, fdH2h) = coroutineScope {
+            val (homeEspn, awayEspn) = coroutineScope {
                 val hDef = async {
                     if (homeRef != null) fetchEspnTeamMatches(homeRef.first, homeRef.second) else emptyList()
                 }
                 val aDef = async {
                     if (awayRef != null) fetchEspnTeamMatches(awayRef.first, awayRef.second) else emptyList()
                 }
-                val fdDef = async {
-                    val fdId = match.id.removePrefix("fd-").toLongOrNull()
-                    val fdKey = prefsRepo.currentPreferences().effectiveFootballDataKey()
-                    if (fdId != null && fdKey.isNotEmpty()) {
-                        runCatching {
-                            apiService.fetchFootballDataHead2Head(fdKey, fdId, limit = 15)
-                                .matches.mapNotNull { it.toDomain() }
-                        }.getOrDefault(emptyList())
-                    } else {
-                        emptyList()
-                    }
-                }
-                Triple(hDef.await(), aDef.await(), fdDef.await())
+                hDef.await() to aDef.await()
             }
 
-            val combinedAll = dedupeAndSortTeamMatches(localMatches + homeEspn + awayEspn + fdH2h)
+            val combinedAll = dedupeAndSortTeamMatches(localMatches + homeEspn + awayEspn)
             val h2h = combinedAll.filter { m ->
                 m.id != match.id && m.status == MatchStatus.FINISHED && matchesSamePair(m, match)
             }.sortedByDescending { it.utcDate }
@@ -1048,57 +963,7 @@ class FixtureRepository(
                 }
             }
 
-            val prefs = prefsRepo.currentPreferences()
-            val afKey = prefs.effectiveApiFootballKey()
-            if (afKey.isBlank() || teamId <= 0) return@runCatching null
-
-            val infoResp = runCatching {
-                apiService.fetchApiFootballTeamInfo("https://v3.football.api-sports.io/teams?id=$teamId", afKey)
-            }.getOrNull()?.response?.firstOrNull()
-            val afCoaches = runCatching {
-                apiService.fetchApiFootballCoaches("https://v3.football.api-sports.io/coachs?team=$teamId", afKey)
-            }.getOrNull()?.response.orEmpty()
-            val resolvedCoach = CoachResolver.selectActiveApiFootballCoach(afCoaches, teamId)
-            val squadResp = runCatching {
-                apiService.fetchApiFootballSquad("https://v3.football.api-sports.io/players/squads?team=$teamId", afKey)
-            }.getOrNull()?.response?.firstOrNull()?.players.orEmpty()
-
-            val detail = enrichTeamSquadPortraits(
-                TeamDetailInfo(
-                    teamId = teamId,
-                    competitionCode = compCode,
-                    name = infoResp?.team?.name?.ifBlank { teamName } ?: teamName,
-                    shortName = teamName,
-                    zhName = TeamLocalization.localizeTeam(teamName),
-                    crest = infoResp?.team?.logo?.ifBlank { crest } ?: crest,
-                    venue = infoResp?.venue?.name ?: "",
-                    founded = infoResp?.team?.founded ?: 0,
-                    clubColors = "",
-                    coachName = resolvedCoach?.name.orEmpty(),
-                    coachZhName = resolvedCoach?.zhName.orEmpty(),
-                    coachNationality = "",
-                    coachPortraitUrl = resolvedCoach?.portraitUrl.orEmpty(),
-                    squad = squadResp.map { p ->
-                        val (zh, tr) = TeamLocalization.localizePlayer(p.name)
-                        SquadMember(
-                            id = "afp-${p.id}",
-                            name = p.name,
-                            zhName = zh,
-                            isTransliterated = tr,
-                            position = p.position ?: "",
-                            positionZh = TeamLocalization.localizePosition(p.position),
-                            nationality = "",
-                            birthYear = p.age?.let { 2026 - it } ?: 0,
-                            shirtNumber = p.number ?: 0,
-                            portraitUrl = p.photo ?: "",
-                        )
-                    },
-                    espnTeamId = espnRef?.second.orEmpty(),
-                    espnSlug = espnRef?.first.orEmpty(),
-                ),
-            )
-            teamDao.upsertAll(listOf(TeamEntity.fromDomain(detail, json)))
-            detail
+            return@runCatching null
         }
     }
 

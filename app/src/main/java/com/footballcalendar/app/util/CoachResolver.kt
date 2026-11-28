@@ -100,13 +100,43 @@ object CoachResolver {
                 coachPortraitUrl = fromMatch.portraitUrl.ifBlank { team.coachPortraitUrl },
             )
         }
-        val normalizedExistingZh = TeamLocalization.preferChineseCoach(team.coachName, team.coachZhName)
-        return if (normalizedExistingZh != team.coachZhName) {
-            team.copy(coachZhName = normalizedExistingZh)
+        val sanitized = sanitizeStaleHistoricalCoach(team)
+        val normalizedExistingZh = TeamLocalization.preferChineseCoach(sanitized.coachName, sanitized.coachZhName)
+        return if (sanitized != team || normalizedExistingZh != sanitized.coachZhName) {
+            sanitized.copy(coachZhName = normalizedExistingZh)
         } else {
             team
         }
     }
+
+    private fun sanitizeStaleHistoricalCoach(team: TeamDetailInfo): TeamDetailInfo {
+        val normTeam = normalizeTeam(team.name)
+        val normCoach = normalizeTeam(team.coachName)
+        val rule = STALE_HISTORICAL_CLUB_OVERRIDES.firstOrNull { candidate ->
+            normTeam.contains(candidate.clubKey) &&
+                candidate.staleCoaches.any { stale -> normCoach == stale || team.coachZhName.contains(stale) }
+        } ?: return team
+        return team.copy(
+            coachName = rule.activeCoachEn,
+            coachZhName = TeamLocalization.preferChineseCoach(rule.activeCoachEn, rule.activeCoachZh),
+        )
+    }
+
+    private data class StaleCoachRule(
+        val clubKey: String,
+        val staleCoaches: Set<String>,
+        val activeCoachEn: String,
+        val activeCoachZh: String,
+    )
+
+    private val STALE_HISTORICAL_CLUB_OVERRIDES = listOf(
+        StaleCoachRule(
+            clubKey = "real madrid",
+            staleCoaches = setOf("jose mourinho", "何塞·莫乌里恩霍", "carlo ancelotti"),
+            activeCoachEn = "Álvaro Arbeloa",
+            activeCoachZh = "阿韦洛亚",
+        ),
+    )
 
     private fun findTeamLineupSide(
         lineups: List<MatchLineupSide>,

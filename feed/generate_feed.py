@@ -381,6 +381,10 @@ class NormalizedMatch:
     apiFootballFixtureId: int | None = None
     espnSlug: str | None = None
     espnEventId: str | None = None
+    lotteryCode: str | None = None
+    lotteryHandicap: int | None = None
+    lotteryDeadlineUtc: int | None = None
+    isFinalized: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
@@ -1376,6 +1380,16 @@ def write_feed_outputs(
         "teams": teams or [],
         "liveDetails": live_details or {},
     }
+
+    cloud_sync_dir = pathlib.Path(__file__).resolve().parents[1] / "cloud-sync"
+    if str(cloud_sync_dir) not in sys.path:
+        sys.path.insert(0, str(cloud_sync_dir))
+    try:
+        from validators.feed_validator import validate_feed_payload
+
+        payload = validate_feed_payload(payload, now_utc=now)
+    except Exception:  # noqa: BLE001
+        pass
 
     fixtures_path = output_dir / "fixtures.json"
     fixtures_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -2471,6 +2485,10 @@ def collect_data(
                     apiFootballFixtureId=em.get("apiFootballFixtureId"),
                     espnSlug=em.get("espnSlug"),
                     espnEventId=em.get("espnEventId"),
+                    lotteryCode=em.get("lotteryCode"),
+                    lotteryHandicap=em.get("lotteryHandicap"),
+                    lotteryDeadlineUtc=em.get("lotteryDeadlineUtc"),
+                    isFinalized=bool(em.get("isFinalized", False)),
                 )
 
     # 1. Fetch Football-Data.org (matches batch, full standings, full teams+squads, scorers)
@@ -2690,11 +2708,12 @@ def collect_data(
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"ESPN directory attach: {exc}")
 
-            # Pre-cache recent finished & live match details from ESPN summary for 0ms open
+            # Pre-cache recent finished & live match details from ESPN summary for 0ms open (skip finalized w/ cache)
             recent_targets = sorted(
                 (
                     m for m in collected.values()
                     if m.espnSlug and m.espnEventId and m.status in {"LIVE", "PAUSED", "FINISHED"}
+                    and not (m.isFinalized and m.id in live_details)
                 ),
                 key=lambda x: x.utcDate,
                 reverse=True,

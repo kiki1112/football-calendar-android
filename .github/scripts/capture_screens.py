@@ -353,16 +353,17 @@ def main() -> int:
         swipe_up(w, h, dist_ratio=0.52, wait_s=1.0)
     screencap(out_dir, "06_match_lineup_bench.png")
 
-    # 6. Switch to 统计 Tab -> scroll back to top (shared LazyColumn!) -> 球队统计 & 球员数据 (图三!)
+    # 6. Switch to 统计 Tab -> gently scroll inner list back up without dismissing sheet -> 球队统计 & 球员数据 (图三!)
     if not tap_match(exact="统计", min_y=int(h * 0.15), max_y=int(h * 0.45), wait_s=1.8):
         tap_xy(int(w * 0.625), int(h * 0.296), "fallback_stats_tab", wait_s=1.8)
-    for _ in range(6):
+    for _ in range(4):
         nodes = dump_nodes()
-        if find_node(nodes, exact="球员数据", min_y=int(h * 0.25), max_y=int(h * 0.60)):
+        if find_node(nodes, exact="球员数据", min_y=int(h * 0.25), max_y=int(h * 0.65)):
             break
-        swipe_down(w, h, dist_ratio=0.60, wait_s=0.9)
+        adb("shell", "input", "swipe", str(w // 2), str(int(h * 0.46)), str(w // 2), str(int(h * 0.78)), "420")
+        time.sleep(0.8)
     screencap(out_dir, "07_match_stats_team.png")
-    if not tap_match(exact="球员数据", min_y=int(h * 0.25), max_y=int(h * 0.60), wait_s=2.2):
+    if not tap_match(exact="球员数据", min_y=int(h * 0.25), max_y=int(h * 0.65), wait_s=2.2):
         tap_xy(int(w * 0.72), int(h * 0.375), "fallback_player_stats_pill", wait_s=2.2)
     screencap(out_dir, "08_match_stats_players.png")
 
@@ -426,6 +427,33 @@ def main() -> int:
         dismiss_system_dialogs()
         time.sleep(0.8)
         screencap(out_dir, "21_live_broadcast_banner.png")
+
+    # 11. Return to Home Calendar -> Switch to "体彩焦点" mode on a Sporttery day (Nov 25 or Nov 28) -> 22_calendar_lottery_mode.png!
+    ensure_app_foreground()
+    tap_bottom_tab(0, "赛程", w, h, wait_s=2.2)
+    for _ in range(4):
+        nodes = dump_nodes()
+        if find_node(nodes, exact="体彩焦点", min_y=int(h * 0.08), max_y=int(h * 0.55)):
+            break
+        swipe_down(w, h, dist_ratio=0.50, wait_s=0.9)
+    if not tap_match(exact="体彩焦点", min_y=int(h * 0.08), max_y=int(h * 0.55), wait_s=2.0):
+        tap_xy(int(w * 0.64), int(h * 0.16), "fallback_lottery_mode_pill", wait_s=2.0)
+    # Scroll slightly so both active 体彩焦点 pill / calendar dots AND lottery match cards (周X00Y · 让球 / 停售 HH:mm) are visible
+    nodes = dump_nodes()
+    has_lottery_card = any(
+        "让球" in str(n["text"]) or "停售" in str(n["text"]) or "周" in str(n["text"])[:2]
+        for n in nodes
+    )
+    if not has_lottery_card:
+        # Ensure we land on a day with open Sporttery cards (Nov 25 or Nov 28)
+        if not tap_match(exact="28", min_y=int(h * 0.15), max_y=int(h * 0.85), prefer_last=True, wait_s=1.8):
+            tap_match(exact="25", min_y=int(h * 0.15), max_y=int(h * 0.85), prefer_last=True, wait_s=1.8)
+    nodes = dump_nodes()
+    if not any("停售" in str(n["text"]) or "让球" in str(n["text"]) for n in nodes):
+        swipe_up(w, h, dist_ratio=0.42, wait_s=1.2)
+    else:
+        swipe_up(w, h, dist_ratio=0.20, wait_s=1.0)
+    screencap(out_dir, "22_calendar_lottery_mode.png")
 
     # Save filtered logcat for diagnostics
     log_text = str(adb("logcat", "-d", "-t", "800", check=False))

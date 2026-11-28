@@ -10,7 +10,6 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import com.footballcalendar.app.BuildConfig
 import com.footballcalendar.app.model.CompetitionCatalog
 import com.footballcalendar.app.model.DataSourceMode
 import kotlinx.coroutines.flow.Flow
@@ -24,8 +23,6 @@ private val Context.userPrefsDataStore: DataStore<Preferences> by preferencesDat
 data class UserPreferences(
     val dataSourceMode: DataSourceMode = DataSourceMode.GITHUB_PAGES,
     val githubPagesUrl: String = UserPreferencesRepository.DEFAULT_GITHUB_PAGES_URL,
-    val footballDataApiKey: String = "",
-    val apiFootballKey: String = "",
     val followedCompetitions: Set<String> = CompetitionCatalog.defaultCodes,
     val favoriteTeams: Set<String> = setOf("阿森纳", "利物浦", "皇家马德里", "阿根廷国家队"),
     val favoritePlayers: Set<String> = setOf("p-mbappe", "p-messi", "p-yamal"),
@@ -44,25 +41,13 @@ data class UserPreferences(
     val lastStandingsSyncMillis: Long = 0L,
     val notifiedMatchIds: Set<String> = emptySet(),
     val demoMutationStep: Int = 0,
-) {
-    fun effectiveFootballDataKey(): String =
-        footballDataApiKey.trim().ifBlank { BuildConfig.BUILTIN_FOOTBALL_DATA_KEY.trim() }
-
-    fun effectiveApiFootballKey(): String =
-        apiFootballKey.trim().ifBlank { BuildConfig.BUILTIN_API_FOOTBALL_KEY.trim() }
-
-    fun hasBuiltInFootballDataKey(): Boolean = BuildConfig.BUILTIN_FOOTBALL_DATA_KEY.isNotBlank()
-
-    fun hasBuiltInApiFootballKey(): Boolean = BuildConfig.BUILTIN_API_FOOTBALL_KEY.isNotBlank()
-}
+)
 
 class UserPreferencesRepository(private val context: Context) {
 
     private object Keys {
         val DATA_SOURCE_MODE = stringPreferencesKey("data_source_mode")
         val GITHUB_PAGES_URL = stringPreferencesKey("github_pages_url")
-        val FOOTBALL_DATA_API_KEY = stringPreferencesKey("football_data_api_key")
-        val API_FOOTBALL_KEY = stringPreferencesKey("api_football_key")
         val FOLLOWED_COMPETITIONS = stringSetPreferencesKey("followed_competitions")
         val FAVORITE_TEAMS = stringSetPreferencesKey("favorite_teams")
         val FAVORITE_PLAYERS = stringSetPreferencesKey("favorite_players")
@@ -87,8 +72,6 @@ class UserPreferencesRepository(private val context: Context) {
         UserPreferences(
             dataSourceMode = DataSourceMode.fromName(prefs[Keys.DATA_SOURCE_MODE]),
             githubPagesUrl = prefs[Keys.GITHUB_PAGES_URL] ?: DEFAULT_GITHUB_PAGES_URL,
-            footballDataApiKey = prefs[Keys.FOOTBALL_DATA_API_KEY] ?: "",
-            apiFootballKey = prefs[Keys.API_FOOTBALL_KEY] ?: "",
             followedCompetitions = prefs[Keys.FOLLOWED_COMPETITIONS] ?: CompetitionCatalog.defaultCodes,
             favoriteTeams = prefs[Keys.FAVORITE_TEAMS] ?: setOf("阿森纳", "利物浦", "皇家马德里", "阿根廷国家队"),
             favoritePlayers = prefs[Keys.FAVORITE_PLAYERS] ?: setOf("p-mbappe", "p-messi", "p-yamal"),
@@ -115,16 +98,10 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun updateDataSource(
         mode: DataSourceMode,
         githubPagesUrl: String,
-        apiKey: String,
-        apiFootballKey: String = "",
     ) {
         context.userPrefsDataStore.edit { prefs ->
             prefs[Keys.DATA_SOURCE_MODE] = mode.name
             prefs[Keys.GITHUB_PAGES_URL] = githubPagesUrl.trim()
-            prefs[Keys.FOOTBALL_DATA_API_KEY] = apiKey.trim()
-            if (apiFootballKey.isNotBlank() || prefs[Keys.API_FOOTBALL_KEY] != null) {
-                prefs[Keys.API_FOOTBALL_KEY] = apiFootballKey.trim()
-            }
         }
     }
 

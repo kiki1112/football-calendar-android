@@ -1,0 +1,68 @@
+name: Cloud Zero-Cost Sync & Sporttery Feed
+
+on:
+  schedule:
+    # Regular cloud aggregation & live snapshot refresh every 30 minutes
+    - cron: "*/30 * * * *"
+    # Dedicated Sporttery issuance windows: 09:00, 15:00, 21:00 Asia/Shanghai (01:00, 07:00, 13:00 UTC)
+    - cron: "0 1,7,13 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build-feed:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run Python Cloud-Sync & Sporttery Unit Tests
+        run: python3 -m unittest discover -s feed/tests -v
+
+      - name: Execute Cloud-Sync Aggregation Mid-Platform
+        env:
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+        run: |
+          mkdir -p _site
+          EXISTING_URL=""
+          if curl -fsSL "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/fixtures.json" -o /tmp/prev_fixtures.json; then
+            EXISTING_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/fixtures.json"
+          fi
+          python3 cloud-sync/sync_runner.py \
+            --out _site \
+            --days-back 10 \
+            --days-ahead 18 \
+            ${EXISTING_URL:+--existing-url "$EXISTING_URL"}
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: "_site"
+
+  deploy-feed:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build-feed
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

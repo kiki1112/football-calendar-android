@@ -17,6 +17,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -139,6 +140,7 @@ fun PlayerPortrait(
     modifier: Modifier = Modifier,
     shirtNumber: Int = 0,
     teamColor: Color = ThemeTokens.AccentFallback,
+    onPhotoLoadedChanged: ((Boolean) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val imageLoader = remember(context) {
@@ -147,6 +149,9 @@ fun PlayerPortrait(
     var loadFailed by remember(url) { mutableStateOf(url.isBlank()) }
     var isLoaded by remember(url) { mutableStateOf(false) }
     val showFallbackBadge = !isLoaded || loadFailed || url.isBlank()
+    LaunchedEffect(showFallbackBadge) {
+        onPhotoLoadedChanged?.invoke(!showFallbackBadge)
+    }
 
     Box(
         modifier = modifier

@@ -44,12 +44,12 @@ class MockFixtureDataSource : FixtureDataSource {
         val templates = buildList {
             add(demo("demo-1001", "PL", today.minusDays(2), 16, 30, "Arsenal FC", "Chelsea FC", MatchStatus.FINISHED, 2, 1, "Emirates Stadium", nowIso))
             add(demo("demo-1002", "PD", today.minusDays(1), 20, 0, "Real Madrid CF", "FC Barcelona", MatchStatus.FINISHED, 3, 2, "Santiago Bernabéu", nowIso))
-            add(demo("demo-1003", "PL", today, (12 + liverpoolHourShift).toInt(), 30, "Liverpool FC", "Manchester City FC", MatchStatus.TIMED, null, null, "Anfield", nowIso))
-            add(demo("demo-1004", "BL1", today, 17, 30, "FC Bayern München", "Borussia Dortmund", bayernStatus, null, null, "Allianz Arena", nowIso))
-            add(demo("demo-1005", "SA", today, 19, 45, "FC Internazionale Milano", "AC Milan", interStatus, interHomeScore, interAwayScore, "San Siro", nowIso))
+            add(demo("demo-1003", "PL", today, (12 + liverpoolHourShift).toInt(), 30, "Liverpool FC", "Manchester City FC", MatchStatus.TIMED, null, null, "Anfield", nowIso, lotteryCode = "周六008", lotteryHandicap = -1))
+            add(demo("demo-1004", "BL1", today, 17, 30, "FC Bayern München", "Borussia Dortmund", bayernStatus, null, null, "Allianz Arena", nowIso, lotteryCode = "周六011", lotteryHandicap = -1))
+            add(demo("demo-1005", "SA", today, 19, 45, "FC Internazionale Milano", "AC Milan", interStatus, interHomeScore, interAwayScore, "San Siro", nowIso, lotteryCode = "周六015", lotteryHandicap = -1))
             add(demo("demo-1006", "J1", today, 10, 0, "Vissel Kobe", "Yokohama F. Marinos", MatchStatus.TIMED, null, null, "Noevir Stadium Kobe", nowIso))
             add(demo("demo-1007", "ACL", today, 11, 0, "Shanghai Port", "Kawasaki Frontale", MatchStatus.TIMED, null, null, "上汽浦东足球场", nowIso))
-            add(demo("demo-1008", "UEL", today.plusDays(1), 20, 0, "Manchester United FC", "AS Roma", MatchStatus.TIMED, null, null, "Old Trafford", nowIso))
+            add(demo("demo-1008", "UEL", today.plusDays(1), 20, 0, "Manchester United FC", "AS Roma", MatchStatus.TIMED, null, null, "Old Trafford", nowIso, lotteryCode = "周日003", lotteryHandicap = -1))
             add(demo("demo-1009", "WC", today.plusDays(3), 0, 0, "Argentina", "Brazil", MatchStatus.TIMED, null, null, "Estadio Monumental", nowIso))
             add(demo("demo-1010", "U20AC", today.plusDays(3), 11, 35, "China PR U20", "Japan U20", MatchStatus.TIMED, null, null, "深圳青少年基地", nowIso))
             add(demo("demo-1011", "EC", today.plusDays(4), 19, 45, "England", "Germany", MatchStatus.TIMED, null, null, "Wembley Stadium", nowIso))
@@ -80,9 +80,12 @@ class MockFixtureDataSource : FixtureDataSource {
         awayScore: Int?,
         venue: String,
         nowIso: String,
+        lotteryCode: String? = null,
+        lotteryHandicap: Int? = null,
     ): MatchItem {
         val meta = CompetitionCatalog.findByCode(compCode)
         val utcInstant = date.atTime(hour, minute).toInstant(ZoneOffset.UTC)
+        val deadlineUtcMs = if (lotteryCode != null) utcInstant.minusSeconds(600).toEpochMilli() else null
         return MatchItem(
             id = id,
             competitionCode = compCode,
@@ -106,6 +109,9 @@ class MockFixtureDataSource : FixtureDataSource {
             lastUpdatedUtc = nowIso,
             homeTeamCrest = TeamAssetCatalog.resolveTeamLogo(home),
             awayTeamCrest = TeamAssetCatalog.resolveTeamLogo(away),
+            lotteryCode = lotteryCode,
+            lotteryHandicap = lotteryHandicap,
+            lotteryDeadlineUtc = deadlineUtcMs,
         )
     }
 
@@ -215,191 +221,14 @@ class GitHubPagesFixtureDataSource(
     }
 }
 
-class FootballDataApiFixtureDataSource(
-    private val apiService: FeedApiService,
-) : FixtureDataSource {
-    override suspend fun fetchAll(prefs: UserPreferences): SyncPayload {
-        val fdKey = prefs.effectiveFootballDataKey()
-        val afKey = prefs.effectiveApiFootballKey()
-        require(fdKey.isNotEmpty() || afKey.isNotEmpty()) {
-            "未检测到可用的 API Key，请在设置中选择 GitHub Pages 订阅或配置 Key"
-        }
-
-        val collected = linkedMapOf<String, MatchItem>()
-        val standings = mutableListOf<StandingEntry>()
-        val teamsList = mutableListOf<TeamDetailInfo>()
-        val scorersList = mutableListOf<StarPlayer>()
-
-        val fdSupported = setOf("PL", "PD", "BL1", "SA", "FL1", "CL", "WC", "EC", "ELC", "DED", "PPL", "BSA", "CLI")
-        val selectedFdCodes = prefs.followedCompetitions.filter { it in fdSupported }
-            .ifEmpty { listOf("PL", "PD", "BL1", "SA", "FL1", "CL") }
-
-        val today = LocalDate.now(ZoneOffset.UTC)
-        val formatter = DateTimeFormatter.ISO_LOCAL_DATE
-
-        // 1. Football-Data Matches Batch
-        if (fdKey.isNotEmpty() && selectedFdCodes.isNotEmpty()) {
-            val comps = selectedFdCodes.joinToString(",")
-            val windows = listOf(
-                today.minusDays(2) to today.plusDays(8),
-                today.plusDays(8) to today.plusDays(18),
-            )
-            for ((from, to) in windows) {
-                runCatching {
-                    val resp = apiService.fetchFootballDataMatches(
-                        apiKey = fdKey,
-                        competitions = comps,
-                        dateFrom = formatter.format(from),
-                        dateTo = formatter.format(to),
-                    )
-                    resp.matches.mapNotNull { it.toDomain() }.forEach { match ->
-                        collected[match.id] = match
-                    }
-                }
-            }
-
-            // Standings + top scorers respecting 10 req/min cleanly
-            val sourceChanged = prefs.lastSyncedMode != DataSourceMode.FOOTBALL_DATA_API.name
-            val standingsFresh = !sourceChanged &&
-                (System.currentTimeMillis() - prefs.lastStandingsSyncMillis) < 15 * 60 * 1000L
-
-            if (!standingsFresh) {
-                val targetStandings = CompetitionCatalog.standingsCodes.filter { it in selectedFdCodes }
-                for ((idx, code) in targetStandings.withIndex()) {
-                    if (idx >= 7) delay(6_200L) // Stay comfortably under 10/min
-                    runCatching {
-                        val resp = apiService.fetchCompetitionStandings(fdKey, code)
-                        val table = resp.standings.firstOrNull { it.type == "TOTAL" }?.table
-                            ?: resp.standings.firstOrNull()?.table
-                            ?: emptyList()
-                        val totalRows = table.size
-                        table.forEach { r ->
-                            val tName = r.team?.name ?: "Unknown"
-                            val tShort = r.team?.shortName ?: r.team?.tla ?: tName
-                            val (zType, zLabel) = TeamLocalization.determineStandingZone(code, r.position, totalRows)
-                            standings += StandingEntry(
-                                competitionCode = code,
-                                rank = r.position,
-                                teamName = tName,
-                                teamZhName = TeamLocalization.localizeTeam(tName, tShort),
-                                teamCrest = TeamAssetCatalog.resolveTeamLogo(tName, r.team?.crest),
-                                played = r.playedGames,
-                                won = r.won,
-                                draw = r.draw,
-                                lost = r.lost,
-                                goalDifference = r.goalDifference,
-                                points = r.points,
-                                form = r.form ?: "",
-                                zoneType = zType,
-                                zoneLabel = zLabel,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // 2. API-Football 3-day window (yesterday, today, tomorrow -> covers J2/KL1/U20AC & live ids)
-        if (afKey.isNotEmpty()) {
-            val nonFdTargets = prefs.followedCompetitions.filter { it !in fdSupported }
-            for (delta in -1L..1L) {
-                val dateStr = formatter.format(today.plusDays(delta))
-                runCatching {
-                    val resp = apiService.fetchApiFootballFixtures(
-                        url = "https://v3.football.api-sports.io/fixtures?date=$dateStr",
-                        apiKey = afKey,
-                    )
-                    resp.response.mapNotNull { it.toMatchItem() }.forEach { afMatch ->
-                        mergeOrAddMatch(collected, afMatch, forceAdd = afMatch.competitionCode in nonFdTargets)
-                    }
-                }
-            }
-        }
-
-        // 3. ESPN Free Public Endpoints (schedules, real-time clocks/scores & UEL/UECL/ACL/J1/AL/MLS standings)
-        val espnDateFmt = DateTimeFormatter.BASIC_ISO_DATE
-        for (delta in -1L..5L) {
-            val ds = espnDateFmt.format(today.plusDays(delta))
-            runCatching {
-                val sb = apiService.fetchEspnScoreboard(
-                    "https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard?dates=$ds",
-                )
-                sb.events.mapNotNull { it.toMatchItem() }.forEach { espnMatch ->
-                    if (espnMatch.competitionCode in prefs.followedCompetitions) {
-                        mergeOrAddMatch(collected, espnMatch, forceAdd = espnMatch.competitionCode !in fdSupported)
-                    }
-                }
-            }
-        }
-        for (code in EspnLeagueCatalog.standingsCodes.filter { it in prefs.followedCompetitions }) {
-            val slug = EspnLeagueCatalog.slugForCode(code) ?: continue
-            runCatching {
-                val sb = apiService.fetchEspnScoreboard(
-                    "https://site.api.espn.com/apis/site/v2/sports/soccer/$slug/scoreboard",
-                )
-                sb.events.mapNotNull { it.toMatchItem(slug) }.forEach { espnMatch ->
-                    mergeOrAddMatch(collected, espnMatch, forceAdd = true)
-                }
-            }
-            if (standings.none { it.competitionCode == code }) {
-                runCatching {
-                    val st = apiService.fetchEspnStandings(
-                        "https://site.api.espn.com/apis/v2/sports/soccer/$slug/standings",
-                    )
-                    standings += st.toStandingEntries(code)
-                }
-            }
-        }
-
-        val resolvedPlayers = (scorersList + TeamAssetCatalog.starPlayers).distinctBy { it.id }
-
-        return SyncPayload(
-            matches = collected.values.toList(),
-            standings = standings,
-            players = resolvedPlayers,
-            teams = teamsList,
-        )
-    }
-
-    private fun mergeOrAddMatch(
-        collected: MutableMap<String, MatchItem>,
-        incoming: MatchItem,
-        forceAdd: Boolean,
-    ) {
-        val existingEntry = collected.entries.firstOrNull { (_, ex) ->
-            ex.competitionCode == incoming.competitionCode &&
-                ex.homeTeamZhName == incoming.homeTeamZhName &&
-                ex.awayTeamZhName == incoming.awayTeamZhName
-        }
-        if (existingEntry != null) {
-            val (key, existing) = existingEntry
-            val preferIncomingScore = (incoming.status.isLive || incoming.status == MatchStatus.FINISHED) &&
-                incoming.homeScore != null && incoming.awayScore != null
-            collected[key] = existing.copy(
-                apiFootballFixtureId = incoming.apiFootballFixtureId ?: existing.apiFootballFixtureId,
-                espnSlug = incoming.espnSlug ?: existing.espnSlug,
-                espnEventId = incoming.espnEventId ?: existing.espnEventId,
-                elapsedMinutes = incoming.elapsedMinutes ?: existing.elapsedMinutes,
-                homeScore = if (preferIncomingScore) incoming.homeScore else existing.homeScore,
-                awayScore = if (preferIncomingScore) incoming.awayScore else existing.awayScore,
-                status = if (incoming.status.isLive || incoming.status == MatchStatus.FINISHED) incoming.status else existing.status,
-            )
-        } else if (forceAdd) {
-            collected[incoming.id] = incoming
-        }
-    }
-}
-
 class DelegatingFixtureDataSource(
     private val mockDataSource: MockFixtureDataSource,
     private val githubPagesDataSource: GitHubPagesFixtureDataSource,
-    private val footballDataApiDataSource: FootballDataApiFixtureDataSource,
 ) : FixtureDataSource {
     override suspend fun fetchAll(prefs: UserPreferences): SyncPayload {
         return when (prefs.dataSourceMode) {
             DataSourceMode.DEMO -> mockDataSource.fetchAll(prefs)
             DataSourceMode.GITHUB_PAGES -> githubPagesDataSource.fetchAll(prefs)
-            DataSourceMode.FOOTBALL_DATA_API -> footballDataApiDataSource.fetchAll(prefs)
         }
     }
 }
