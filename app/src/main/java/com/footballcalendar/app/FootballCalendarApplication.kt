@@ -119,13 +119,14 @@ class FootballCalendarApplication : Application() {
         container.notificationHelper.ensureChannels()
 
         appScope.launch {
+            // Seed local database deterministically before WorkManager can trigger a remote sync
+            container.fixtureRepository.ensureSeededIfEmpty()
             val prefs = container.prefsRepository.currentPreferences()
             container.syncScheduler.configurePeriodicSync(
                 enabled = prefs.autoSyncEnabled,
                 intervalHours = prefs.syncIntervalHours,
                 wifiOnly = prefs.wifiOnlySync,
             )
-            container.fixtureRepository.ensureSeededIfEmpty()
         }
     }
 }

@@ -296,7 +296,22 @@ class FixtureRepository(
         }
     }
 
+    suspend fun ensureLocalSeedReady() {
+        seedMutex.withLock {
+            val prefs = prefsRepo.currentPreferences()
+            val storedMatches = matchDao.getAllMatchesOnce()
+            val hasMatches = storedMatches.isNotEmpty()
+            val hasStandings = standingDao.getAllStandingsOnce().isNotEmpty()
+            val hasTeams = teamDao.getAllTeamsOnce().isNotEmpty()
+            if (!hasMatches || !hasStandings || !hasTeams) {
+                seedFromBundledAsset(prefs.followedCompetitions, prefs.dataSourceMode, populateDb = true)
+            }
+        }
+    }
+
     suspend fun syncFixtures(zoneId: ZoneId = ZoneId.systemDefault()): Result<SyncSummary> {
+        // Guarantee bundled seed & Sporttery baseline exist before any background worker diffs against Room
+        ensureLocalSeedReady()
         return runCatching { syncMutex.withLock {
             val prefs = prefsRepo.currentPreferences()
             val modeChanged = prefs.lastSyncedMode.isNotBlank() &&
