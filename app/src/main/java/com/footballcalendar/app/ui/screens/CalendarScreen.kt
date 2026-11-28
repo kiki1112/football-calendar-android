@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -1574,7 +1575,12 @@ fun MatchDetailBottomSheet(
         }
 
         // Main Tabbed Scrollable Content
+        val detailTabListState = rememberLazyListState()
+        LaunchedEffect(selectedDetailTab) {
+            detailTabListState.scrollToItem(0)
+        }
         LazyColumn(
+            state = detailTabListState,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
@@ -2498,6 +2504,7 @@ private fun MatchTacticalLineupsTabContent(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     // Home Team Badge Strip on Pitch Top
+                    val homePitchZh = TeamLocalization.preferChinese(match.homeTeamName, homeSide.teamZhName)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -2510,8 +2517,8 @@ private fun MatchTacticalLineupsTabContent(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            TeamCrest(url = match.homeTeamCrest, teamName = homeSide.teamZhName, size = 22.dp)
-                            Text(homeSide.teamZhName, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            TeamCrest(url = match.homeTeamCrest, teamName = homePitchZh, size = 22.dp)
+                            Text(homePitchZh, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                         if (homeSide.formation.isNotBlank()) {
                             Surface(color = Color.Black.copy(alpha = 0.28f), shape = RoundedCornerShape(999.dp)) {
@@ -2554,14 +2561,14 @@ private fun MatchTacticalLineupsTabContent(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = "${homeSide.teamZhName} ${homeSide.formation.ifBlank { "首发11人" }}",
+                            text = "${TeamLocalization.preferChinese(match.homeTeamName, homeSide.teamZhName)} ${homeSide.formation.ifBlank { "首发11人" }}",
                             color = Color.White.copy(alpha = 0.85f),
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                         )
                         if (awaySide != null) {
                             Text(
-                                text = "${awaySide.teamZhName} ${awaySide.formation.ifBlank { "首发11人" }}",
+                                text = "${TeamLocalization.preferChinese(match.awayTeamName, awaySide.teamZhName)} ${awaySide.formation.ifBlank { "首发11人" }}",
                                 color = Color.White.copy(alpha = 0.85f),
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
@@ -2591,6 +2598,7 @@ private fun MatchTacticalLineupsTabContent(
                             }
                         }
 
+                        val awayPitchZh = TeamLocalization.preferChinese(match.awayTeamName, awaySide.teamZhName)
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -2603,8 +2611,8 @@ private fun MatchTacticalLineupsTabContent(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                TeamCrest(url = match.awayTeamCrest, teamName = awaySide.teamZhName, size = 22.dp)
-                                Text(awaySide.teamZhName, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                TeamCrest(url = match.awayTeamCrest, teamName = awayPitchZh, size = 22.dp)
+                                Text(awayPitchZh, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             }
                             if (awaySide.formation.isNotBlank()) {
                                 Surface(color = Color.Black.copy(alpha = 0.28f), shape = RoundedCornerShape(999.dp)) {

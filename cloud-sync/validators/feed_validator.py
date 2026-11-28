@@ -15,7 +15,7 @@ FEED_DIR = CLOUD_SYNC_DIR.parent / "feed"
 if str(FEED_DIR) not in sys.path:
     sys.path.insert(0, str(FEED_DIR))
 
-from localization import localize_coach  # noqa: E402
+from localization import localize_coach, localize_team  # noqa: E402
 
 FINAL_RAW_STATUSES = {"FINISHED", "FT", "AET", "PEN", "AWARDED", "CANCELED", "CANCELLED"}
 VALID_NORMALIZED_STATUSES = {
@@ -108,15 +108,19 @@ def validate_lineups_and_coaches(
         ]
         coach_en = str(side.get("coachName") or "").strip()
         coach_zh = localize_coach(coach_en, str(side.get("coachZhName") or ""))
+        team_en = str(side.get("teamName") or "").strip()
+        raw_team_zh = str(side.get("teamZhName") or "").strip()
+        team_zh = localize_team(team_en) if team_en else raw_team_zh
 
         if team_zh_index is not None and coach_en:
-            tkey = _norm(str(side.get("teamName") or side.get("teamZhName") or ""))
+            tkey = _norm(team_en or raw_team_zh)
             if tkey:
                 team_zh_index[tkey] = (coach_en, coach_zh)
 
         cleaned_sides.append(
             {
                 **side,
+                "teamZhName": team_zh or raw_team_zh,
                 "coachName": coach_en,
                 "coachZhName": coach_zh,
                 "startXI": start_xi,

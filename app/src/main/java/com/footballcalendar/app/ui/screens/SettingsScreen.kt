@@ -138,7 +138,7 @@ fun SettingsScreen(
                     .padding(start = 20.dp, end = 20.dp, top = 12.dp),
             ) {
                 Text(
-                    text = "看球闹钟与加密内置订阅",
+                    text = "看球闹钟与云端零密钥订阅",
                     style = MaterialTheme.typography.labelMedium,
                     color = AppleRed,
                     fontWeight = FontWeight.SemiBold,
