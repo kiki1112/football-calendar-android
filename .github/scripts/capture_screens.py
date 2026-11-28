@@ -283,11 +283,31 @@ def main() -> int:
     # Scroll HeroNextMatchCard (1s countdown ticker) off-screen so UIAutomator hits 50ms idle dumps!
     swipe_up(w, h, dist_ratio=0.45, wait_s=1.0)
 
-    # 2. Switch calendar date to 25 (Nov 25 Beijing Watch-Night: 43-44 matches incl. UCL!)
+    # 2. Switch calendar date to 25 (Nov 25 Beijing Watch-Night: 44 matches incl. UCL!)
     if not tap_match(exact="25", min_y=int(h * 0.15), max_y=int(h * 0.85), prefer_last=True, wait_s=1.8):
         tap_xy(int(w * 0.375), int(h * 0.333), "fallback_date_25", wait_s=1.8)
     swipe_up(w, h, dist_ratio=0.22, wait_s=1.2)
     screencap(out_dir, "02_calendar_day_matches.png")
+
+    # 2b. Capture "体彩焦点" dual-mode view while still near the top on Nov 25 (zero 12-page scrollback!)
+    for _ in range(3):
+        nodes = dump_nodes()
+        if find_node(nodes, exact="体彩焦点", min_y=int(h * 0.08), max_y=int(h * 0.65)):
+            break
+        swipe_down(w, h, dist_ratio=0.62, wait_s=0.9)
+    if tap_match(exact="体彩焦点", min_y=int(h * 0.08), max_y=int(h * 0.65), wait_s=2.0):
+        nodes = dump_nodes()
+        if not any(("让球" in str(n["text"]) or "停售" in str(n["text"])) and int(n["cy"]) < int(h * 0.80) for n in nodes):
+            swipe_up(w, h, dist_ratio=0.30, wait_s=1.1)
+        screencap(out_dir, "22_calendar_lottery_mode.png")
+        # Restore back to "全部赛事" before Step 3 scrolls through UCL matches
+        for _ in range(3):
+            nodes = dump_nodes()
+            if find_node(nodes, exact="全部赛事", min_y=int(h * 0.08), max_y=int(h * 0.65)):
+                break
+            swipe_down(w, h, dist_ratio=0.45, wait_s=0.9)
+        tap_match(exact="全部赛事", min_y=int(h * 0.08), max_y=int(h * 0.65), wait_s=1.8)
+        swipe_up(w, h, dist_ratio=0.45, wait_s=1.0)
 
     # Fast-scroll down Nov 25 to reach rich UCL blockbusters (idx 30..38: 巴塞罗那 / 利物浦 / 曼联 / 国际米兰 / 拜仁慕尼黑)
     for _ in range(11):
@@ -421,30 +441,6 @@ def main() -> int:
         dismiss_system_dialogs()
         time.sleep(0.8)
         screencap(out_dir, "21_live_broadcast_banner.png")
-
-    # 11. Return to Home Calendar ("日历") -> Switch to "体彩焦点" mode on Nov 25 / Nov 28 -> 22_calendar_lottery_mode.png!
-    ensure_app_foreground()
-    dismiss_modal(w, h, attempts=2)
-    tap_bottom_tab(0, "日历", w, h, wait_s=2.2)
-    # Dismiss top live broadcast banner if still displayed
-    tap_match(exact="✕", max_y=int(h * 0.25), wait_s=0.8)
-    for _ in range(5):
-        nodes = dump_nodes()
-        if find_node(nodes, exact="体彩焦点", min_y=int(h * 0.08), max_y=int(h * 0.65)):
-            break
-        swipe_down(w, h, dist_ratio=0.45, wait_s=0.9)
-    if not tap_match(exact="体彩焦点", min_y=int(h * 0.08), max_y=int(h * 0.65), wait_s=2.0):
-        tap_xy(int(w * 0.64), int(h * 0.16), "fallback_lottery_mode_pill", wait_s=2.0)
-
-    nodes = dump_nodes()
-    has_sale = any("让球" in str(n["text"]) or "停售" in str(n["text"]) for n in nodes)
-    if not has_sale:
-        if not tap_match(exact="25", min_y=int(h * 0.18), max_y=int(h * 0.85), prefer_last=True, wait_s=1.8):
-            tap_match(exact="28", min_y=int(h * 0.18), max_y=int(h * 0.85), prefer_last=True, wait_s=1.8)
-        nodes = dump_nodes()
-        if not any(("让球" in str(n["text"]) or "停售" in str(n["text"])) and int(n["cy"]) < int(h * 0.82) for n in nodes):
-            swipe_up(w, h, dist_ratio=0.22, wait_s=1.1)
-    screencap(out_dir, "22_calendar_lottery_mode.png")
 
     # Save filtered logcat for diagnostics
     log_text = str(adb("logcat", "-d", "-t", "800", check=False))
