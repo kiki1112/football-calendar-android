@@ -41,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -256,7 +257,7 @@ fun SettingsScreen(
                                         "● 离线精选缓存模式（弱网/无网保护）"
                                     },
                                     style = MaterialTheme.typography.labelMedium,
-                                    color = ThemeTokens.BrandCrimson,
+                                    color = ThemeTokens.AccentFallback,
                                     fontWeight = FontWeight.Bold,
                                 )
                                 Text(
@@ -311,7 +312,7 @@ fun SettingsScreen(
                             onClick = { onSaveDataSource(selectedMode, githubPagesUrl) },
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(14.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = ThemeTokens.BrandCrimson),
+                            colors = ButtonDefaults.buttonColors(containerColor = ThemeTokens.AccentFallback),
                             enabled = !state.isSyncing,
                         ) {
                             Text(

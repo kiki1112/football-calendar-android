@@ -1,8 +1,10 @@
 import datetime as dt
+import json
 import pathlib
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 CLOUD_SYNC = REPO_ROOT / "cloud-sync"
@@ -258,6 +260,66 @@ class CloudSyncAndSportteryTest(unittest.TestCase):
         self.assertFalse(guard.should_fetch_match_detail(m_fin, now_utc=now))
         self.assertEqual(guard.skipped_finalized, 1)
         self.assertTrue(guard.should_fetch_match_detail(cleaned["matches"][1], now_utc=now))
+
+    def test_sync_runner_end_to_end_with_collect_data_and_sporttery(self) -> None:
+        import generate_feed as gf
+        import sync_runner as sr
+
+        anchor = dt.datetime(2026, 11, 28, 12, 0, tzinfo=dt.timezone.utc)
+        demo_matches = gf.generate_demo_matches(anchor)
+        demo_standings = gf.generate_demo_standings()
+        demo_players = gf.enrich_players()
+        teams = [
+            {
+                "teamId": 86,
+                "competitionCode": "PD",
+                "name": "Real Madrid CF",
+                "shortName": "Real Madrid",
+                "zhName": "皇家马德里",
+                "crest": "",
+                "venue": "Bernabéu",
+                "founded": 1902,
+                "clubColors": "White",
+                "coachName": "José Mourinho",
+                "coachZhName": "何塞·莫乌里恩霍",
+                "squad": [],
+            }
+        ]
+        st = SportteryFixture(
+            sportteryId="st-demo",
+            lotteryCode="周六088",
+            homeName="皇家马德里",
+            awayName="巴塞罗那",
+            leagueName="西甲",
+            kickoffUtc="2026-11-28T20:00:00Z",
+            kickoffMillis=int(dt.datetime(2026, 11, 28, 20, 0, tzinfo=dt.timezone.utc).timestamp() * 1000),
+            lotteryHandicap=-1,
+            lotteryDeadlineUtc=int(dt.datetime(2026, 11, 28, 19, 50, tzinfo=dt.timezone.utc).timestamp() * 1000),
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = pathlib.Path(tmp) / "site"
+            with (
+                mock.patch.object(
+                    gf,
+                    "collect_data",
+                    return_value=(demo_matches, demo_standings, teams, demo_players, {}, "demo_fallback"),
+                ),
+                mock.patch.object(sr, "fetch_sporttery_fixtures", return_value=([st], False, None)),
+            ):
+                summary = sr.run_sync(
+                    output_dir=out_dir,
+                    competitions=["PL", "PD"],
+                    days_back=2,
+                    days_ahead=3,
+                    existing_url=None,
+                    enable_sporttery=True,
+                )
+
+            self.assertGreaterEqual(summary["lotteryMatches"], 1)
+            payload = json.loads((out_dir / "fixtures.json").read_text(encoding="utf-8"))
+            self.assertEqual(payload["teams"][0]["coachName"], "Álvaro Arbeloa")
+            self.assertEqual(payload["teams"][0]["coachZhName"], "阿韦洛亚")
 
 
 if __name__ == "__main__":

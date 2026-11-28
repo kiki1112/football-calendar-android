@@ -125,7 +125,7 @@ def run_sync(
         competitions=competitions,
         days_back=days_back,
         days_ahead=days_ahead,
-        existing_url=existing_url,
+        existing_feed_url=existing_url,
         api_football_key=af_key,
         enable_espn=True,
     )
